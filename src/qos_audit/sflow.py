@@ -45,6 +45,7 @@ class SflowDevice:
 
 
 def _int(value: str) -> int | None:
+    logger.debug("_int: entrée | {}", value)
     try:
         n = int(value)
     except ValueError:
