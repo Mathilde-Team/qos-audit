@@ -9,6 +9,12 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Sous-commande `sflow` : extraction du contexte sFlow par interface depuis une configuration Comware
+  (sampling-rate, mode, collectors, counter interval) vers la section « exporters » de
+  `calibration.yaml`, avec constats (sortie WAN non échantillonnée, taux différents sur une
+  même chaîne, compteurs absents ou trop lents) ; alimente `sampling_drift` via les taux
+  configurés (#19).
+
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
 
