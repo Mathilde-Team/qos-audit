@@ -52,3 +52,27 @@ Les petits flux et les voix courtes sont mal représentés avec un taux de 1/100
 - **L'extraction décrit la configuration, pas son effet** : seule la mesure (`marking`, `dscp_plan`) dit si le marquage s'applique.
 - **Approximation des ACL** : exclusions `deny` et critères restrictifs (DSCP, drapeaux TCP, fragments) non modélisés ; voir `EXTRACTION_COMWARE.md`.
 - **Syntaxe Comware 7 non validée sur vos configurations réelles** : à relire à la première extraction.
+
+## Ajouts de la session 05
+
+- **Compteurs d'interface (G6)** : l'utilisation vient des counter samples sFlow (30 s) — mesure exacte — quand ils couvrent
+  au moins `counter_min_coverage_pct` (50 % par défaut) de la fenêtre ; sinon repli sur les flux, signalé dans le constat
+  (`utilization_source`). Les flux ne servent plus qu'à la répartition par classe.
+- **Base de comptage différente** : les compteurs sont des octets de **trame** (ifInOctets/ifOutOctets), les flux des octets **IP**
+  (corrigés de `bytes_overhead_per_packet`). L'écart systémique (quelques pour cent, mais qui peut dépasser la marge si le
+  trafic est riche en petites trames ou en overhead L2/IP) est pris en compte par la marge du contrôle `counter_consistency`
+  (`counter_consistency_max_dev_pct`, 20 % par défaut) ; si des WARN systématiques sans facteur d'échantillonnage faux
+  apparaissent, ajuster ce seuil en phase 0 (mesure du biais réel). Un facteur d'échantillonnage faux, lui, se voit d'un
+  facteur N.
+- **Cadence des compteurs plus lente que le bucket** : les buckets alimentés par un intervalle plus long que le pas sont
+  répartis par interpolation (débit constant sur l'intervalle) et signalés dans le constat (`interpolated_buckets`) : ce ne
+  sont pas des mesures du bucket.
+- **Buckets partiels** : un bucket couvert partiellement (bord de fenêtre, trou d'échantillonnage) ne porte pas de débit ;
+  il est exclu des verdicts et signalé (`partial_buckets`).
+- **Resets de compteurs** : un redémarrage d'équipement fait perdre l'intervalle concerné (jamais inventé) ; la couverture
+  de la fenêtre est reportée dans le constat. Les compteurs sFlow étant 64 bits, toute diminution est traitée comme un
+  reset (un rebouclage 32 bits n'est jamais supposé).
+- **Index et champs des compteurs** : `elastiflow-telemetry_flow-*` et `netif.*` par défaut (ElastiFlow 6.2) — à faire valider en
+  phase 0 et surcharger dans `calibration.yaml` (`elastiflow.counters_index`, `elastiflow.counter_fields`).
+- **ECN CE reste sur les flux** : c'est une proportion d'octets, que l'échantillonnage n'altère pas ; les compteurs ne portent
+  pas de marque ECN.

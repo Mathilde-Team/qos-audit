@@ -1,5 +1,31 @@
 # Changelog
 
+## Session 05 (2026-10-25)
+
+- **Utilisation calculée sur les compteurs d'interface à 30 s** (G6, #20) : lecture des counter samples sFlow dans ElastiFlow
+  (`elastiflow.py::counter_samples`, index `elastiflow-telemetry_flow-*` surchargeable) et calcul des débits exacts
+  (`counters.py::rates_from_counters` : horodatages réels, resets perdus jamais inventés, compteurs 64 bits, couverture).
+- `saturation` et `class_overflow` (donc le jugement « lien chargé » de la congestion) se calculent sur les compteurs ;
+  les flux ne servent plus qu'à la **répartition par classe** (octets du bucket × part des flux).
+- Nouveau contrôle `counter_consistency` : somme des flux extrapolés vs octets des compteurs, **sur les mêmes buckets
+  pleinement couverts** ; un écart au-delà de la marge (erreur d'échantillonnage, plancher `counter_consistency_max_dev_pct`)
+  signale un facteur d'échantillonnage faux (P6) ; « compteurs à zéro + flux positifs » et « compteurs positifs + aucun flux »
+  sont des WARN explicites.
+- Grille de buckets alignée sur l'epoch (comme `date_histogram`) ; seuls les buckets entièrement couverts portent un débit
+  (`partial_buckets`, `interpolated_buckets` dans les constats) ; `class_overflow` est INCONCLUSIVE si la répartition par
+  classe ne couvre pas assez de buckets.
+- Repli signalé sur les flux quand les compteurs sont absents, inaccessibles ou couvrent moins de
+  `counter_min_coverage_pct` (50 % par défaut) : `utilization_source` dans les constats, message « repli ».
+- Calibration : `elastiflow.counters_index` et `elastiflow.counter_fields`.
+- Seuils : `counter_min_coverage_pct`, `counter_consistency_max_dev_pct`.
+- Documentation : contrôles, limites, architecture, calibration mis à jour.
+- Qualité : 90 tests, ruff, couverture lignes+branches mesurée et plancherée dans `pyproject.toml`
+  (`fail_under = 79` sur le combiné, mesuré 79,7 % — 82,2 % lignes, 72,3 % branches ; paliers lignes et
+  branches vérifiés par `scripts/check_coverage_paliers.py`, palier socle à relever à chaque contribution).
+- CI : job « Qualité (qos-audit) » (`.github/workflows/ci.yml`, runners `maison`) exécutant
+  `scripts/qualite.sh` (lint, format, tests, paliers de couverture) ; projet devenu packageable
+  (build-system hatchling) et dépendances de dev déclarées (`[dependency-groups]`), `uv.lock` versionné.
+
 ## Session 04 (2026-10-25)
 
 - **Extraction de la QoS depuis les configurations Comware** (`qos-audit extract`, package `comware/`) : ACL (basic, advanced,
