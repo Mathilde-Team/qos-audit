@@ -12,7 +12,7 @@ from qos_audit.comware.model import Acl, DeviceQos
 from qos_audit.comware.parser import parse_rule
 from qos_audit.models import WIDE_PORT_RANGE, Exit, FlowMatch, Policy, QosClass, Site
 
-__all__ = ["DEFAULT_THRESHOLDS", "load_policy", "parse_comware_acl", "parse_ports"]
+__all__ = ["DEFAULT_THRESHOLDS", "load_policies", "load_policy", "parse_comware_acl", "parse_ports"]
 
 DEFAULT_THRESHOLDS: dict[str, float] = {
     "conformity_min_pct": 98,
@@ -115,6 +115,38 @@ def load_policy(path: Path) -> Policy:
         thresholds={**DEFAULT_THRESHOLDS, **raw.get("thresholds", {})},
         dscp_names={int(k): v for k, v in raw.get("dscp_names", {}).items()},
     )
+
+
+def load_policies(path: Path, site: str | None = None) -> list[Policy]:
+    """Politique(s) à auditer : un fichier, ou le dossier de ``qos-audit extract --per-site`` (#23).
+
+    Dans un dossier, chaque ``policy.<site>.yaml`` ne porte que son site ; ``policy.extracted.yaml`` (union de tous
+    les équipements) est ignoré.
+
+    Args:
+        path: Fichier YAML, ou dossier de politiques par site.
+        site: Site audité : seule sa politique est chargée.
+
+    Returns:
+        Les politiques, une par site pour un dossier.
+
+    Raises:
+        ValueError: Dossier sans politique par site, ou sans politique pour ``site``.
+    """
+    logger.debug("load_policies: entrée | {} site={}", path, site)
+    if not path.is_dir():
+        policies = [load_policy(path)]
+        logger.debug("load_policies: sortie | fichier unique")
+        return policies
+    policies = [load_policy(f) for f in sorted(path.glob("policy.*.yaml")) if f.name != "policy.extracted.yaml"]
+    if site is not None:
+        policies = [p for p in policies if any(s.name == site for s in p.sites)]
+    if not policies:
+        msg = f"{path} : aucune politique par site" + (f" pour {site}" if site else "") + " (extract --per-site)"
+        logger.debug("load_policies: sortie (vide) | {}", msg)
+        raise ValueError(msg)
+    logger.debug("load_policies: sortie | {} politique(s)", len(policies))
+    return policies
 
 
 def parse_comware_acl(text: str) -> list[FlowMatch]:
