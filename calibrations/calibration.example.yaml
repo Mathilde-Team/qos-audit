@@ -4,7 +4,7 @@ reference: VAL-ELASTIFLOW-001
 validated_on: null             # AAAA-MM-JJ : date de signature du verdict (section 10 du document de validation)
 
 elastiflow:
-  version: "à renseigner"
+  version: "à renseigner"      # version déployée ; comparée au périmètre validé de chaque exporteur
   fields:                      # P4 : noms relevés sur un enregistrement de test (clés = elastiflow.FIELDS)
     sampling: flow.sampling_interval
   counters_index: elastiflow-telemetry_flow-*   # counter samples sFlow (nom ElastiFlow >= 6.2) ; à vérifier
@@ -16,7 +16,7 @@ elastiflow:
   bytes_overhead_per_packet: 0     # P5 : 14 si ElastiFlow additionne des octets de trame (la politique est en octets IP)
   ingest_lag_minutes: 5            # P7 : délai d'agrégation ; la fenêtre d'audit se termine à « maintenant - délai »
 
-exporters:                     # P2 : `display sflow` sur chaque équipement
+exporters:                     # P2 : `display sflow` sur chaque équipement ; état DÉPLOYÉ (à tenir à jour)
   rtr-a-01:
     model: "à renseigner"
     comware_version: "à renseigner"
@@ -25,6 +25,14 @@ exporters:                     # P2 : `display sflow` sur chaque équipement
     interfaces:
       - {ifindex: 49, name: "WAN1", sampling_rate: 128}
       - {ifindex: 10, name: "LAN accès", sampling_rate: 128}
+    validation:                    # périmètre validé (protocole §10.4), relevé à la signature
+      validated_on: null           # défaut : validated_on global
+      model: "à renseigner"
+      comware_version: "à renseigner"
+      elastiflow_version: "à renseigner"   # défaut : elastiflow.version
+      sampling_direction: inbound
+      interface: 49                # interface de mesure
+      sampling_rates: [128]
   rtr-a-02:
     model: "à renseigner"
     comware_version: "à renseigner"
@@ -32,3 +40,5 @@ exporters:                     # P2 : `display sflow` sur chaque équipement
     counter_interval_s: 30
     interfaces:
       - {ifindex: 49, name: "WAN2 (secours)", sampling_rate: 32}
+    # Pas de bloc `validation` : couvert par rtr-a-01 s'il a le même modèle, le même firmware, le même
+    # sens et des sampling-rates validés ; sinon signalé (ici 1:32 n'est pas validé).

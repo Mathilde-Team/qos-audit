@@ -19,7 +19,7 @@ Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur re
 | `sampling_adequacy` | Le sampling reçu est-il adapté à la capacité de la sortie (erreur au plancher) ? | WARN > 5 %, CRIT > 15 % | Bonne |
 | `sampling_cost` | Le sampling est-il trop fin (CPU, export) ? | WARN | Estimation au pire cas |
 | `sampling_drift` | Le sampling configuré (calibration) est-il celui reçu ? | WARN | Bonne |
-| `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage possible ? | WARN | Déclaratif |
+| `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage possible ? Chaque exporteur couvert par un périmètre validé, sans mise à jour depuis ? | WARN | Déclaratif |
 
 ## Lecture du débordement de classe
 
