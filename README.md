@@ -26,6 +26,9 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
                      --calibration calibrations/calibration.example.yaml --opensearch http://es:9200
     qos-audit compare avant.json apres.json
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --ifindex-map configs/ifindex.csv --out qos_extract/
+    # une politique par site (policy.<site>.yaml), puis audit de chaque site avec sa politique
+    qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
+    qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 [--site site-a]
 
 ## Avant la première exécution
 

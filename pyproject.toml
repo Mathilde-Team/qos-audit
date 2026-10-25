@@ -34,7 +34,7 @@ source = ["src/qos_audit"]
 
 [tool.coverage.report]
 # Seuil bloquant de l'équipe : 95 % (Mathilde-Team/.github#9). Palier du dépôt :
-# mesure du 26/10/2026 après #32 (83,43 %, entier inférieur), relevé à chaque PR jusqu'à 95 (suivi : #5).
-fail_under = 83
+# mesure du 26/10/2026 après #23 (85,36 %, entier inférieur), relevé à chaque PR jusqu'à 95 (suivi : #5).
+fail_under = 85
 show_missing = true
 skip_covered = false

@@ -9,6 +9,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Politique par site (#23) : `extract --per-site` (avec `--base-policy`, rattachement par les sorties ou
+  `--site-map exporter,site`) écrit une `policy.<site>.yaml` par site, construite avec ses seuls équipements, et
+  une section « Politiques par site » dans le rapport ; `audit --policy <dossier>` charge la politique de chaque
+  site, ou du site audité avec `--site`. Le constat `devices_diverge` détaille les critères propres à chaque
+  équipement. Palier de couverture relevé de 83 à 85 % (mesure 85,36 %).
 - ACL par plages de ports trop larges (#32) : constat d'extraction `acl_port_range_wide` (plage de plus de
   1024 ports sans IP) ; contrôle `port_range` : pour une classe voix, part de ses octets en paquets non voix
   par sortie et IP candidates (IPBX, passerelles) à qui restreindre la classe ; seuils `port_range_max_ports`,

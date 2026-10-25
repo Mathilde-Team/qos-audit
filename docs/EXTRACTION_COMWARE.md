@@ -19,6 +19,8 @@ Code : `src/qos_audit/comware/` (`parser`, `convert`, `extract`, `model`). Tests
 | `--base-policy` | Politique du plan opérateur (classes, priorités, budgets, sites, seuils) : conservée, seul `match` est remplacé |
 | `--ifindex-map` | CSV `exporter,ifindex,name` pour convertir les noms d'interface en ifIndex (forme courte ou longue, normalisées) |
 | `--exporter` | Nom d'exporteur ElastiFlow imposé (un seul fichier) ; par défaut le `sysname` |
+| `--per-site` | Une politique par site en plus de la politique globale (demande `--base-policy`, voir « Politique par site ») |
+| `--site-map` | CSV `exporter,site` : rattachement des équipements aux sites (prioritaire sur les sorties de la politique) |
 
 Sorties dans `--out` :
 
@@ -26,6 +28,7 @@ Sorties dans `--out` :
 |---|---|
 | `policy.extracted.yaml` | Politique rechargeable par `qos-audit audit` (classes avec `match`, `trust.untrusted`) |
 | `extraction_report.md` | Couverture par équipement, règles de marquage, interfaces non fiables, constats |
+| `policy.<site>.yaml` | Avec `--per-site` : politique du site, construite avec ses seuls équipements |
 | `qos_extract.json` | Modèle complet par équipement (ACL, classifiers, behaviors brutes dont `car` et `queue`, interfaces) |
 
 Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
@@ -55,6 +58,23 @@ Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
   DSCP à une valeur autorisée (par défaut 0). Les entrées déjà présentes dans la politique de base sont conservées.
 - **ifIndex** : nécessaire à l'audit. Sans `--ifindex-map`, l'entrée garde `ifname` et l'audit l'ignore en le signalant.
 
+## Politique par site
+
+Avec `--per-site`, chaque site de la politique de base reçoit sa politique `policy.<site>.yaml` (caractères hors
+`[A-Za-z0-9_.-]` remplacés par `_`), construite comme la politique globale mais avec les seuls équipements du site :
+le `match` d'une classe ne reprend plus les ACL des autres sites.
+
+- **Rattachement** : un équipement appartient au site dont une sortie porte son exporteur ; `--site-map` (CSV
+  `exporter,site`) rattache les autres (commutateurs d'accès) ou corrige ce rattachement. Un équipement sans site
+  est signalé (`device_without_site`) et absent des politiques par site ; un site sans configuration aussi
+  (`site_without_device`, le `match` du plan est conservé).
+- **Ports non fiables** de la politique de base : repris dans le site de leur exporteur, ou dans tous les sites si
+  l'exporteur n'est rattaché à aucun.
+- **Audit** : `qos-audit audit --policy qos_extract/` charge chaque `policy.<site>.yaml` (`policy.extracted.yaml`
+  est ignoré) et réunit les constats ; avec `--site`, seule la politique du site audité est chargée. `advise` sur
+  un dossier demande `--site`.
+- Le rapport ajoute une section « Politiques par site » : équipements, fichier et constats propres à chaque site.
+
 ## Constats d'extraction
 
 | Code | Niveau | Signification |
@@ -70,7 +90,9 @@ Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
 | `policy_not_applied` | WARN | Policy définie mais appliquée nulle part : aucune règle produite |
 | `plan_class_without_rule` | WARN | Classe du plan sans règle de marquage dans les configurations (plan et configuration divergent) |
 | `dscp_not_in_plan` | WARN | DSCP imposé par une configuration mais absent du plan |
-| `devices_diverge` | WARN | Règles différentes d'un équipement à l'autre pour un même DSCP (union retenue) |
+| `devices_diverge` | WARN | Règles différentes d'un équipement à l'autre pour un même DSCP (union retenue) ; le message liste, par équipement, les critères non communs à tous |
+| `device_without_site` | WARN | Avec `--per-site` : équipement rattaché à aucun site (ni sortie, ni `--site-map`) |
+| `site_without_device` | WARN | Avec `--per-site` : site sans configuration, `match` du plan conservé |
 | `acl_type_ignored` | INFO | ACL non IPv4 |
 
 ## Limites
@@ -80,8 +102,8 @@ Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
 - **Le match est une approximation.** Une ACL peut utiliser des critères que `FlowMatch` ne porte pas (DSCP, flags, fragments) ;
   les `deny` ne se traduisent pas en exclusions. Dans ces cas l'outil écarte la règle (`acl_rule_skipped`) ou élargit le match
   (`acl_deny_ignored`) et le dit.
-- **Une seule politique globale** : les `match` de plusieurs équipements sont fusionnés. Si les ACL diffèrent par site, la
-  vérification par site reste valable mais sur l'union des critères.
+- **Politique globale** : sans `--per-site`, les `match` de plusieurs équipements sont fusionnés. Si les ACL diffèrent par
+  site, la vérification par site reste valable mais sur l'union des critères : utiliser `--per-site`.
 - **Non extraits** : `qos trust` et `qos map-table` (interprétation du DSCP), `car` et `queue` (budgets, files), `remark dot1p`,
   profils sFlow par interface (candidat session 05 : alimenter `calibration.yaml`), applications `global` et `vlan-policy` dans
   la détection des ports non fiables.
