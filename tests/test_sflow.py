@@ -93,6 +93,23 @@ def test_sflow_findings_equipement_absent() -> None:
     assert findings and all("non fournie" in f.message for f in findings)
 
 
+def test_cli_sflow_yaml_sur_stdout_rechargeable(monkeypatch, capsys) -> None:
+    """Sans --out ni --policy : le YAML seul sur stdout, rechargeable par load_calibration."""
+    import tempfile
+
+    from qos_audit.calibration import load_calibration
+
+    monkeypatch.setattr(sys, "argv", ["qos-audit", "sflow", "--cfg", str(FIXTURE)])
+    rc = cli.main()
+    yaml_text = capsys.readouterr().out
+    assert rc == 0
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+        fh.write(yaml_text)
+        name = fh.name
+    cal = load_calibration(Path(name))
+    assert cal.exporters["rtr-a-01"].sampling_direction == "inbound"
+
+
 def test_cli_sflow_produit_yaml_et_constats(monkeypatch, tmp_path: Path) -> None:
     out = tmp_path / "calibration-sflow.yaml"
     monkeypatch.setattr(sys, "argv", ["qos-audit", "sflow", "--cfg", str(FIXTURE), "--out", str(out)])
@@ -120,7 +137,8 @@ def test_cli_sflow_constats_avec_politique(monkeypatch, tmp_path: Path, capsys) 
         ],
     )
     rc = cli.main()
-    constats = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    constats = json.loads(captured.err)  # constats sur stderr, YAML dans --out
     assert rc == 1  # des WARN
     assert any("non échantillonnée" in c["message"] for c in constats)
     assert all(c["check"] == "sflow_config" for c in constats)

@@ -190,6 +190,15 @@ def sflow_findings(
                     f"sortie WAN {ex.name} (ifindex {ex.ifindex}) non échantillonnée dans la configuration fournie",
                 )
     for dev in devices:
+        # interfaces échantillonnées mais absentes du CSV ifindex : la section
+        # calibration ne peut pas les inclure (ifindex requis), à ne pas perdre en silence
+        for itf in sorted(dev.interfaces.values(), key=lambda x: x.name):
+            if (dev.exporter, itf.name) not in (ifindex_map or {}):
+                add(
+                    Severity.INCONCLUSIVE,
+                    f"{dev.exporter}/{itf.name}",
+                    "échantillonnée mais absente du CSV ifindex : ignorée dans la section calibration",
+                )
         rates = sorted({i.sampling_rate for i in dev.interfaces.values() if i.sampling_rate})
         if len(rates) > 1:
             # sans relation de chaîne démontrée (quel port alimente quelle sortie),

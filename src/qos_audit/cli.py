@@ -141,7 +141,7 @@ def _sflow(a: argparse.Namespace) -> int:
     if a.out:
         a.out.write_text(yaml_text, encoding="utf-8")
     else:
-        sys.stdout.write(yaml_text)
+        sys.stdout.write(yaml_text)  # le YAML seul sur stdout, les constats sur stderr
     findings: list[Finding] = []
     if a.policy:
         ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
@@ -150,7 +150,7 @@ def _sflow(a: argparse.Namespace) -> int:
             {"check": f.check, "severity": f.severity.name, "subject": f.subject, "message": f.message}
             for f in findings
         ]
-        sys.stdout.write(json.dumps(dump, indent=2, ensure_ascii=False) + "\n")
+        sys.stderr.write(json.dumps(dump, indent=2, ensure_ascii=False) + "\n")
     levels = {f.severity for f in findings}
     logger.debug("_sflow: retour | {} équipement(s), {} constat(s)", len(devices), len(findings))
     return 2 if Severity.CRIT in levels else 1 if Severity.WARN in levels else 0
