@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
 from loguru import logger
 
+from qos_audit.comware.convert import acl_to_matches
+from qos_audit.comware.model import Acl, DeviceQos
+from qos_audit.comware.parser import parse_rule
 from qos_audit.models import Exit, FlowMatch, Policy, QosClass, Site
 
 __all__ = ["DEFAULT_THRESHOLDS", "load_policy", "parse_comware_acl", "parse_ports"]
@@ -33,13 +35,6 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "counter_min_coverage_pct": 50,  # en dessous : repli sur les flux (compteurs trop lacunaires)
     "counter_consistency_max_dev_pct": 20,  # écart flux extrapolés vs compteurs au-delà duquel on s'alerte
 }
-
-_RULE = re.compile(
-    r"rule\s+\d+\s+permit\s+(?P<proto>ip|tcp|udp|icmp)"
-    r"(?:\s+source\s+(?P<src>\S+)\s+(?P<swild>\S+))?"
-    r"(?:\s+destination\s+(?P<dst>\S+)\s+(?P<dwild>\S+))?"
-    r"(?:\s+destination-port\s+(?P<op>eq|range)\s+(?P<p1>\d+)(?:\s+(?P<p2>\d+))?)?"
-)
 
 
 def parse_ports(spec: str | int | None) -> tuple[int, int] | None:
@@ -120,26 +115,34 @@ def load_policy(path: Path) -> Policy:
 
 
 def parse_comware_acl(text: str) -> list[FlowMatch]:
-    """Convertit des lignes ``rule N permit ...`` Comware en FlowMatch.
+    """Convertit des lignes ``rule N permit ...`` d'une ACL avancée Comware en FlowMatch.
 
-    TODO: wildcard -> CIDR, ``gt/lt/neq``, source-port, liaison ACL -> traffic classifier -> behavior (remark dscp).
+    Même implémentation que ``qos-audit extract`` (``comware.parser.parse_rule`` puis
+    ``comware.convert.acl_to_matches``) : wildcard → CIDR, ports ``eq/gt/lt/neq/range`` en source et en
+    destination, protocoles nommés ou numériques. La liaison ACL → traffic classifier → behavior (remark
+    dscp) et les applications de politique sont traitées par ``qos-audit extract`` sur une configuration
+    complète ; cette fonction ne lit que des règles isolées.
+
+    Restent non modélisés (signalés en avertissement, la règle est écartée ou ignorée) : règles ``deny``
+    (exclusions, #21/#22), références à un ``object-group`` (absentes d'un extrait isolé), critères
+    restrictifs non convertibles (dscp, tos, precedence, flags TCP…) et wildcards non contiguës.
 
     Args:
-        text: Extrait de ``display acl all`` / running-config.
+        text: Extrait de ``display acl all`` / running-config (lignes ``rule``).
 
     Returns:
         Liste de critères de classification.
     """
-    out: list[FlowMatch] = []
+    logger.debug("parse_comware_acl: entrée | {} ligne(s)", len(text.splitlines()))
+    dev, acl = DeviceQos(exporter="extrait"), Acl("advanced", None, "extrait")
     for line in text.splitlines():
-        m = _RULE.search(line.strip())
-        if not m:
+        rule = parse_rule(line.strip(), "advanced") if line.strip().startswith("rule") else None
+        if rule is None:
             logger.debug("Règle ignorée : {}", line.strip())
             continue
-        dports = None
-        if m["op"] == "eq":
-            dports = (int(m["p1"]), int(m["p1"]))
-        elif m["op"] == "range":
-            dports = (int(m["p1"]), int(m["p2"]))
-        out.append(FlowMatch(protocol=None if m["proto"] == "ip" else m["proto"], dst_ports=dports))
+        acl.rules.append(rule)
+    out = acl_to_matches(dev, acl)
+    for issue in dev.issues:
+        logger.warning("ACL : {} ({})", issue.message, issue.code)
+    logger.debug("parse_comware_acl: sortie | {} critère(s)", len(out))
     return out

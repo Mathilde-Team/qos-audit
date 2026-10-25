@@ -9,6 +9,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- `policy.parse_comware_acl` s'appuie sur le parser et la conversion de `comware/` (une seule implémentation
+  wildcard → CIDR et ports `eq/gt/lt/neq/range`, source et destination) ; TODO remplacé par la liste de ce qui
+  reste non modélisé (#11).
 - Extraction : noms d'interface Comware normalisés (`GE1/0/10` = `GigabitEthernet1/0/10`, `XGE`, `BAGG`, `Vlan`…)
   dans `--ifindex-map` et la détection des ports non fiables ; un nom à deux ifIndex est refusé. Palier de
   couverture relevé de 79 à 80 % (mesure 80,11 %) (#24).
