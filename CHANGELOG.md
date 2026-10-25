@@ -9,7 +9,7 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
-- Couverture : seuil bloquant à 90 % lignes et branches dans `pyproject.toml` (palier 1, #5) ;
+- Couverture : seuil bloquant à 91 % lignes et branches dans `pyproject.toml` (palier 1, #5) ;
   tests du client ElastiFlow (fenêtres, filtres, agrégations, pagination) et des contrôles
   `dscp_plan`, `untrusted_ports`, `class_share`, `congestion`, `exit_balance`, `sampling_drift`,
   `calibration`, `run_all` ; tests du point d'entrée (`sampling`, `compare`, `audit`).
