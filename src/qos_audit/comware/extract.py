@@ -10,6 +10,7 @@ import yaml
 from loguru import logger
 
 from qos_audit.comware.convert import acl_to_matches, dscp_name
+from qos_audit.comware.ifname import normalize_ifname
 from qos_audit.comware.model import DeviceQos, Issue
 from qos_audit.comware.parser import parse_device
 from qos_audit.models import FlowMatch, Policy
@@ -72,11 +73,30 @@ def load_ifindex_map(path: Path) -> dict[tuple[str, str], int]:
     Args:
         path: Fichier CSV avec en-tête.
 
+    Les noms sont indexés sous leur forme normalisée (``GE1/0/10`` et ``GigabitEthernet1/0/10`` sont la même
+    interface) : le CSV peut venir de ``ifName`` (forme courte) comme de ``ifDescr`` (forme longue).
+
+    Args:
+        path: Fichier CSV avec en-tête.
+
     Returns:
-        ``{(exporter, nom d'interface): ifIndex}``.
+        ``{(exporter, nom d'interface normalisé): ifIndex}``.
+
+    Raises:
+        ValueError: Un même nom normalisé porte deux ifIndex différents sur un exporteur.
     """
+    logger.debug("load_ifindex_map: entrée | {}", path)
+    out: dict[tuple[str, str], int] = {}
     with path.open(encoding="utf-8", newline="") as fh:
-        return {(r["exporter"], r["name"]): int(r["ifindex"]) for r in csv.DictReader(fh)}
+        for r in csv.DictReader(fh):
+            key = (r["exporter"], normalize_ifname(r["name"]))
+            idx = int(r["ifindex"])
+            if out.setdefault(key, idx) != idx:
+                msg = f"{path} : {key[0]} {key[1]} a deux ifIndex ({out[key]} et {idx})"
+                logger.debug("load_ifindex_map: sortie (ifIndex en conflit) | {}", msg)
+                raise ValueError(msg)
+    logger.debug("load_ifindex_map: sortie | {} interfaces", len(out))
+    return out
 
 
 def _applications(dev: DeviceQos, policy: str) -> list[str]:
@@ -164,8 +184,9 @@ def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tu
             if direction != "inbound" or name.startswith(("global", "vlan")):
                 continue
             entry: dict = {"exporter": r.exporter, "ifname": name}
-            if (r.exporter, name) in ifmap:
-                entry["ifindex"] = ifmap[(r.exporter, name)]
+            key = (r.exporter, normalize_ifname(name))
+            if key in ifmap:
+                entry["ifindex"] = ifmap[key]
             out.append(entry)
     return out
 
@@ -183,7 +204,7 @@ def build_policy(
     Args:
         devices: Équipements analysés.
         base: Politique de référence (classes de l'opérateur, sites, seuils).
-        ifmap: Correspondance (exporteur, nom d'interface) -> ifIndex.
+        ifmap: Correspondance (exporteur, nom d'interface normalisé) -> ifIndex (voir ``load_ifindex_map``).
 
     Returns:
         ``(politique sous forme de dictionnaire YAML, extraction avec règles et constats)``.
