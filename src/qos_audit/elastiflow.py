@@ -8,7 +8,16 @@ from datetime import datetime
 from loguru import logger
 from opensearchpy import OpenSearch
 
-__all__ = ["FIELDS", "ElastiflowClient", "Window", "configure_fields", "exit_filter"]
+__all__ = [
+    "FIELDS",
+    "OPTIONAL_FIELDS",
+    "ElastiflowClient",
+    "SchemaError",
+    "Window",
+    "configure_fields",
+    "exit_filter",
+    "mapped_fields",
+]
 
 # À VÉRIFIER contre le schéma de la version ElastiFlow déployée (les noms varient selon les versions).
 FIELDS = {
@@ -27,7 +36,55 @@ FIELDS = {
     "sampling": "flow.sampling.interval",
 }
 
+# Clés logiques que le code n'interroge pas toujours : absentes du mapping, elles ne bloquent pas l'audit.
+OPTIONAL_FIELDS = frozenset({"ecn"})
+
 _UNITS = {"s": 1, "m": 60, "h": 3600}
+
+
+class SchemaError(RuntimeError):
+    """Un ou plusieurs champs de ``FIELDS`` sont absents du mapping de l'index ElastiFlow."""
+
+    def __init__(self, index: str, missing: dict[str, str]) -> None:
+        """Construit l'erreur.
+
+        Args:
+            index: Pattern d'index interrogé.
+            missing: ``{clé logique: nom de champ}`` absents du mapping.
+        """
+        self.index = index
+        self.missing = missing
+        detail = ", ".join(f"{k} = {v}" for k, v in sorted(missing.items()))
+        super().__init__(
+            f"Champs absents du mapping de {index} : {detail}. "
+            "Relever le mapping réel (phase 0, P4) et corriger la section des champs de calibration.yaml."
+        )
+
+
+def mapped_fields(mapping: dict) -> set[str]:
+    """Liste les chemins de champs (``a.b.c``) d'une réponse ``indices.get_mapping``, tous index confondus.
+
+    Args:
+        mapping: Réponse brute ``{index: {"mappings": {"properties": ...}}}``.
+
+    Returns:
+        Ensemble des chemins de champs feuilles et objets.
+    """
+    logger.debug("mapped_fields : {} index", len(mapping))
+    paths: set[str] = set()
+
+    def walk(props: dict, prefix: str) -> None:
+        for name, spec in props.items():
+            path = f"{prefix}{name}"
+            paths.add(path)
+            walk(spec.get("properties", {}), f"{path}.")
+            for sub in spec.get("fields", {}):
+                paths.add(f"{path}.{sub}")
+
+    for idx in mapping.values():
+        walk(idx.get("mappings", {}).get("properties", {}), "")
+    logger.debug("mapped_fields -> {} chemins", len(paths))
+    return paths
 
 
 def configure_fields(overrides: dict[str, str]) -> None:
@@ -99,6 +156,37 @@ class ElastiflowClient:
         self._index = index
         self._scale = scale_by_sampling
         self._overhead = bytes_overhead_per_packet
+
+    def required_keys(self) -> set[str]:
+        """Clés logiques de ``FIELDS`` réellement interrogées avec ce paramétrage.
+
+        Returns:
+            Les clés obligatoires (``sampling`` seulement si l'on extrapole, ``packets`` seulement si l'on corrige
+            la base trame).
+        """
+        logger.debug("required_keys : scale={}, overhead={}", self._scale, self._overhead)
+        keys = set(FIELDS) - OPTIONAL_FIELDS
+        if not self._scale:
+            keys.discard("sampling")
+        if not self._overhead:
+            keys.discard("packets")
+        logger.debug("required_keys -> {}", sorted(keys))
+        return keys
+
+    def check_fields(self) -> None:
+        """Vérifie que chaque champ interrogé existe dans le mapping de l'index (issue #16).
+
+        Raises:
+            SchemaError: Si des champs sont absents ; le message liste les clés et les noms attendus.
+        """
+        logger.debug("check_fields : index={}", self._index)
+        present = mapped_fields(self._os.indices.get_mapping(index=self._index))
+        missing = {k: FIELDS[k] for k in self.required_keys() if FIELDS[k] not in present}
+        if missing:
+            err = SchemaError(self._index, missing)
+            logger.debug("check_fields -> {} champ(s) absent(s)", len(missing))
+            raise err
+        logger.debug("check_fields -> schéma conforme")
 
     def _query(self, w: Window, extra_filter: dict | None) -> dict:
         rng = {"range": {"@timestamp": {"gte": w.start.isoformat(), "lt": w.end.isoformat()}}}

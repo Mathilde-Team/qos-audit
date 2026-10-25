@@ -1,5 +1,10 @@
 # Changelog
 
+## Non publié
+
+- Vérification du schéma ElastiFlow au démarrage d'`audit` et `advise` : chaque champ de `FIELDS` interrogé doit exister
+  dans le mapping de l'index, sinon erreur explicite et code retour 2 (#16).
+
 ## Session 04 (2026-10-25)
 
 - **Extraction de la QoS depuis les configurations Comware** (`qos-audit extract`, package `comware/`) : ACL (basic, advanced,

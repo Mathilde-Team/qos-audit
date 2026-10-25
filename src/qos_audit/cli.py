@@ -18,7 +18,7 @@ from qos_audit.advisor.render_comware import render_marking_policy
 from qos_audit.calibration import Calibration, apply_calibration, default_calibration, load_calibration
 from qos_audit.checks import run_all
 from qos_audit.comware.extract import build_policy, load_devices, load_ifindex_map, policy_to_yaml, render_report
-from qos_audit.elastiflow import ElastiflowClient, Window
+from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
 from qos_audit.policy import load_policy
 from qos_audit.sampling import SamplingParams, expected_error_pct, recommended_sampling, worst_case_samples_per_s
 from qos_audit.verify import compare_reports
@@ -50,11 +50,16 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         scale_by_sampling=not cal.sampling_already_applied,
         bytes_overhead_per_packet=cal.bytes_overhead_per_packet,
     )
+    client.check_fields()
     return client, cal, _window(a.minutes, lag)
 
 
 def _audit(a: argparse.Namespace) -> int:
-    client, cal, window = _setup(a)
+    try:
+        client, cal, window = _setup(a)
+    except SchemaError as exc:
+        logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        return 2
     findings = run_all(client, load_policy(a.policy), window, only_site=a.site, cal=cal)
     a.out.write_text(
         json.dumps([asdict(f) | {"severity": f.severity.name} for f in findings], indent=2, default=str),
@@ -66,7 +71,11 @@ def _audit(a: argparse.Namespace) -> int:
 
 
 def _advise(a: argparse.Namespace) -> int:
-    client, _cal, window = _setup(a)
+    try:
+        client, _cal, window = _setup(a)
+    except SchemaError as exc:
+        logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        return 2
     policy = load_policy(a.policy)
     clusters = discover_unclassified(client, policy, window, only_site=a.site)
     recos = recommend(clusters, load_catalog(a.catalog), policy)
