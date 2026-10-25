@@ -11,8 +11,6 @@ from loguru import logger
 from qos_audit.comware.model import Acl, AclRule, DeviceQos, Issue
 from qos_audit.models import FlowMatch
 
-from loguru import logger
-
 __all__ = ["DSCP_BY_NAME", "acl_to_matches", "dscp_name", "dscp_value", "ports_to_ranges", "wildcard_to_cidr"]
 
 DSCP_BY_NAME = {
