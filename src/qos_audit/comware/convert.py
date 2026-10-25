@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 import itertools
+from dataclasses import replace
+
+from loguru import logger
 
 from qos_audit.comware.model import Acl, AclRule, DeviceQos, Issue
 from qos_audit.models import FlowMatch
@@ -102,39 +105,66 @@ def _addresses(rule: AclRule, side: str, dev: DeviceQos, acl: Acl) -> list[str |
     return [cidr]
 
 
+def _rule_matches(dev: DeviceQos, acl: Acl, rule: AclRule) -> tuple[list[FlowMatch] | None, str | None]:
+    """Critères d'une règle d'ACL, ou le motif de son rejet (``None`` si convertible).
+
+    Un critère non porté par ``FlowMatch`` (dscp, tos, fragment, flags TCP…) ou des
+    adresses irrésolues rendent la règle non modélisable : la convertir quand même
+    donnerait un match plus large que la règle réelle.
+    """
+    logger.debug("_rule_matches: entrée | {} règle {}", acl.label, rule.rule_id)
+    restrictive = [u for u in rule.unsupported if u.split()[0] not in _BENIGN]
+    if restrictive:
+        motif = f"critère non modélisé ({', '.join(restrictive)})"
+        logger.debug("_rule_matches: retour | refus : {}", motif)
+        return None, motif
+    srcs, dsts = _addresses(rule, "src", dev, acl), _addresses(rule, "dst", dev, acl)
+    if srcs is None or dsts is None:
+        motif = "adresses non résolues"
+        logger.debug("_rule_matches: retour | refus : {}", motif)
+        return None, motif
+    combos = list(itertools.product(srcs, dsts, ports_to_ranges(rule.src_ports), ports_to_ranges(rule.dst_ports)))
+    if len(combos) > _MAX_EXPANSION:
+        dev.issues.append(
+            Issue("WARN", "acl_expansion_truncated", acl.label, f"règle {rule.rule_id} : {len(combos)} combinaisons")
+        )
+        combos = combos[:_MAX_EXPANSION]
+    matches = [
+        FlowMatch(protocol=normalize_protocol(rule.protocol), src_cidr=s, dst_cidr=d, src_ports=sp, dst_ports=dp)
+        for s, d, sp, dp in combos
+    ]
+    logger.debug("_rule_matches: retour | {} critère(s)", len(matches))
+    return matches, None
+
+
 def acl_to_matches(dev: DeviceQos, acl: Acl) -> list[FlowMatch]:
     """Convertit les règles ``permit`` d'une ACL en critères FlowMatch.
 
-    Les règles ``deny`` (exclusions) et les critères non modélisés (dscp, tos, fragment, flags TCP…) sont signalés.
+    Sémantique de première correspondance (issue #21) : un ``deny`` exclut des
+    ``permit`` **suivants** le trafic qu'il rejette (un ``deny`` postérieur est sans
+    effet sur un ``permit`` déjà atteint). Un ``deny`` non modélisable reste signalé :
+    sans son exclusion, le match est plus large que la réalité.
     """
+    logger.debug("acl_to_matches: entrée | {} ({} règle(s))", acl.label, len(acl.rules))
     out: list[FlowMatch] = []
+    pending_denies: list[FlowMatch] = []
     for rule in acl.rules:
-        if rule.action != "permit":
-            dev.issues.append(
-                Issue("WARN", "acl_deny_ignored", acl.label, f"règle {rule.rule_id} deny : exclusion non modélisée")
-            )
+        matches, motif = _rule_matches(dev, acl, rule)
+        if rule.action == "deny":
+            if motif is not None:
+                dev.issues.append(
+                    Issue("WARN", "acl_deny_ignored", acl.label,
+                          f"règle {rule.rule_id} deny : exclusion ignorée ({motif}), match plus large que la réalité")
+                )  # fmt: skip
+                continue
+            pending_denies += matches
             continue
-        restrictive = [u for u in rule.unsupported if u.split()[0] not in _BENIGN]
-        if restrictive:
+        if motif is not None:
             # convertir sans ce critère donnerait un match plus large que la règle réelle : on l'écarte
             dev.issues.append(
-                Issue("WARN", "acl_rule_skipped", acl.label,
-                      f"règle {rule.rule_id} ignorée : critère non modélisé ({', '.join(restrictive)})")
+                Issue("WARN", "acl_rule_skipped", acl.label, f"règle {rule.rule_id} ignorée : {motif}")
             )  # fmt: skip
             continue
-        srcs, dsts = _addresses(rule, "src", dev, acl), _addresses(rule, "dst", dev, acl)
-        if srcs is None or dsts is None:
-            continue
-        combos = list(itertools.product(srcs, dsts, ports_to_ranges(rule.src_ports), ports_to_ranges(rule.dst_ports)))
-        if len(combos) > _MAX_EXPANSION:
-            dev.issues.append(
-                Issue(
-                    "WARN", "acl_expansion_truncated", acl.label, f"règle {rule.rule_id} : {len(combos)} combinaisons"
-                )
-            )
-            combos = combos[:_MAX_EXPANSION]
-        out += [
-            FlowMatch(protocol=normalize_protocol(rule.protocol), src_cidr=s, dst_cidr=d, src_ports=sp, dst_ports=dp)
-            for s, d, sp, dp in combos
-        ]
+        out += [replace(m, excludes=tuple(pending_denies)) for m in matches]
+    logger.debug("acl_to_matches: retour | {} match(s), {} exclusion(s) en attente", len(out), len(pending_denies))
     return out

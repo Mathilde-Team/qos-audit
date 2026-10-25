@@ -79,7 +79,17 @@ def test_build_policy_without_base() -> None:
     assert by_name["af31"]["match"][1] == {"protocol": "tcp", "dst_ports": "5060-5061"}
     assert by_name["af21"]["match"] == [{"protocol": "tcp", "dst_cidr": "10.20.0.0/16", "dst_ports": "443"}]
     codes = {i.code for i in ext.issues}
-    assert {"wildcard_non_contiguous", "acl_rule_skipped", "acl_deny_ignored", "policy_not_applied"} <= codes
+    assert {"wildcard_non_contiguous", "acl_rule_skipped", "policy_not_applied"} <= codes
+    # #21 : le deny de la fixture (ACL 3003 règle 10) est modélisé comme exclusion
+    # du permit suivant, plus signalé par acl_deny_ignored
+    assert "acl_deny_ignored" not in codes
+    assert by_name["af11"]["match"] == [
+        {
+            "protocol": "tcp",
+            "dst_ports": "25",
+            "excludes": [{"protocol": "tcp", "src_cidr": "10.0.0.0/24", "dst_ports": "25"}],
+        }
+    ]
     assert policy["trust"]["untrusted"] == [{"exporter": "rtr-a-01", "ifname": "GigabitEthernet1/0/10"}]
 
 

@@ -96,6 +96,16 @@ def load_policy(path: Path) -> Policy:
                     dst_cidr=m.get("dst_cidr"),
                     src_ports=parse_ports(m.get("src_ports")),
                     dst_ports=parse_ports(m.get("dst_ports")),
+                    excludes=tuple(
+                        FlowMatch(
+                            protocol=e.get("protocol"),
+                            src_cidr=e.get("src_cidr"),
+                            dst_cidr=e.get("dst_cidr"),
+                            src_ports=parse_ports(e.get("src_ports")),
+                            dst_ports=parse_ports(e.get("dst_ports")),
+                        )
+                        for e in m.get("excludes", [])
+                    ),
                 )
                 for m in c.get("match", [])
             ),
