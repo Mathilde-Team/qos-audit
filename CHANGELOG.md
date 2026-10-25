@@ -9,6 +9,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
+  défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
+  de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,
+  extrapolation par enregistrement, séries) et les sous-commandes `advise`, `compare` et `sampling`. Seuil de
+  couverture porté à 95 % (mesure 95,90 %).
 - Politique par site (#23) : `extract --per-site` (avec `--base-policy`, rattachement par les sorties ou
   `--site-map exporter,site`) écrit une `policy.<site>.yaml` par site, construite avec ses seuls équipements, et
   une section « Politiques par site » dans le rapport ; `audit --policy <dossier>` charge la politique de chaque
