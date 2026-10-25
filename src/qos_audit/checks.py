@@ -45,7 +45,11 @@ _DIRS = (Direction.EGRESS.value, Direction.INGRESS.value)
 
 
 def match_filter(m: FlowMatch) -> dict:
-    """Traduit un FlowMatch (ACL théorique) en filtre OpenSearch."""
+    """Traduit un FlowMatch (ACL théorique) en filtre OpenSearch.
+
+    Les exclusions (``deny`` précédents, issue #21) deviennent des clauses
+    ``must_not`` : le trafic rejeté par l'ACL ne compte pas dans le match.
+    """
     f: list[dict] = []
     if m.protocol:
         f.append({"term": {FIELDS["proto"]: m.protocol}})
@@ -57,7 +61,10 @@ def match_filter(m: FlowMatch) -> dict:
         f.append({"range": {FIELDS["dst_port"]: {"gte": m.dst_ports[0], "lte": m.dst_ports[1]}}})
     if m.src_ports:
         f.append({"range": {FIELDS["src_port"]: {"gte": m.src_ports[0], "lte": m.src_ports[1]}}})
-    return {"bool": {"filter": f}}
+    body: dict = {"filter": f}
+    if m.excludes:
+        body["must_not"] = [match_filter(e) for e in m.excludes]
+    return {"bool": body}
 
 
 def _and(*clauses: dict) -> dict:

@@ -81,13 +81,19 @@ class Direction(str, Enum):
 
 @dataclass(frozen=True)
 class FlowMatch:
-    """Équivalent d'une règle d'ACL (critères de classification)."""
+    """Équivalent d'une règle d'ACL (critères de classification).
+
+    ``excludes`` porte les ``deny`` qui précèdent la règle dans l'ACL (première
+    correspondance gagnante, issue #21) : le trafic correspondant à une exclusion
+    est rejeté par l'ACL et ne doit pas être compté dans le match.
+    """
 
     protocol: str | None = None
     src_cidr: str | None = None
     dst_cidr: str | None = None
     src_ports: tuple[int, int] | None = None
     dst_ports: tuple[int, int] | None = None
+    excludes: tuple["FlowMatch", ...] = ()
 
 
 @dataclass(frozen=True)

@@ -204,7 +204,10 @@ def _match_to_dict(m: FlowMatch) -> dict:
 
     d = {"protocol": m.protocol, "src_cidr": m.src_cidr, "dst_cidr": m.dst_cidr,
          "src_ports": rng(m.src_ports), "dst_ports": rng(m.dst_ports)}  # fmt: skip
-    return {k: v for k, v in d.items() if v is not None}
+    d = {k: v for k, v in d.items() if v is not None}
+    if m.excludes:  # #21 : les deny précédents, sérialisés comme le match lui-même
+        d["excludes"] = [_match_to_dict(e) for e in m.excludes]
+    return d
 
 
 def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tuple[str, str], int]) -> list[dict]:

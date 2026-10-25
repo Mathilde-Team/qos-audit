@@ -41,6 +41,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
   références figées) ; instrumentation loguru de 11 modules ; l'`except` muet du parser comware
   est journalisé (#6).
 
+- ACL : les règles `deny` précédant un `permit` sont modélisées comme exclusions du
+  match (sémantique de première correspondance), traduites en clauses `must_not` dans
+  les requêtes ElastiFlow et sérialisées dans la politique ; le constat
+  `acl_deny_ignored` ne reste que pour les `deny` non modélisables (#21).
+
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
 - Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
