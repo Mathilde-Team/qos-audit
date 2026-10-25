@@ -8,14 +8,14 @@ adéquation du sampling, santé de la calibration.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from loguru import logger
 
 from qos_audit.calibration import Calibration
-from qos_audit.counters import CounterSource, NullCounters
+from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
-from qos_audit.models import Direction, Finding, FlowMatch, Policy, Severity, Site, rel_error_pct
+from qos_audit.models import Direction, Exit, Finding, FlowMatch, Policy, Severity, Site, rel_error_pct
 from qos_audit.sampling import (
     expected_error_pct,
     params_from_thresholds,
@@ -23,7 +23,12 @@ from qos_audit.sampling import (
     worst_case_samples_per_s,
 )
 
-__all__ = ["check_calibration", "match_filter", "run_all"]
+__all__ = [
+    "check_calibration",
+    "check_counter_consistency",
+    "match_filter",
+    "run_all",
+]
 
 _DIRS = (Direction.EGRESS.value, Direction.INGRESS.value)
 
@@ -73,6 +78,51 @@ def _p95(values: list[float]) -> float:
         return 0.0
     s = sorted(values)
     return s[min(len(s) - 1, int(0.95 * len(s)))]
+
+
+def _bucket_key(ts: str, w: Window) -> int | None:
+    """Début de bucket (secondes epoch) d'un horodatage ISO, sur la grille de ``date_histogram``.
+
+    Args:
+        ts: Horodatage ISO (``key_as_string`` d'un ``date_histogram``).
+        w: Fenêtre d'analyse (``w.bucket`` fixe le pas).
+
+    Returns:
+        Le début de bucket, ou ``None`` si l'horodatage est illisible.
+    """
+    logger.debug("_bucket_key: entrée | {}", ts)
+    try:
+        t = datetime.fromisoformat(str(ts))
+    except ValueError:
+        logger.debug("Horodatage de bucket illisible : {}", ts)
+        return None
+    sec = w.bucket_seconds
+    key = int(t.timestamp() // sec * sec)
+    logger.debug("_bucket_key: sortie | {}", key)
+    return key
+
+
+def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRates | None:
+    """Débits exacts d'une sortie par les compteurs, ou ``None`` si les compteurs sont indisponibles.
+
+    Args:
+        c: Client ElastiFlow.
+        ex: Sortie WAN.
+        w: Fenêtre d'analyse.
+        d: Sens (``egress``/``ingress``).
+
+    Returns:
+        Les débits, ou ``None`` si la requête échoue (repli sur les flux à la charge de l'appelant).
+    """
+    logger.debug("_exit_rates: entrée | {}:if{} {}", ex.exporter, ex.ifindex, d)
+    try:
+        samples = c.counter_samples(ex.exporter, ex.ifindex, w)
+    except Exception as exc:  # noqa: BLE001 — indisponibilité des compteurs : repli signalé sur les flux
+        logger.warning("Compteurs indisponibles pour {}:if{} ({}): repli sur les flux", ex.exporter, ex.ifindex, exc)
+        return None
+    rates = rates_from_counters(samples, w, d)
+    logger.debug("_exit_rates: sortie | usable={}", rates.usable)
+    return rates
 
 
 def _exits(p: Policy, only_site: str | None):
@@ -233,35 +283,60 @@ def check_saturation_and_overflow(
 ) -> list[Finding]:
     """Utilisation de la CAPACITÉ de la sortie et débordement des budgets de classe, par bucket.
 
+    L'utilisation vient des **compteurs d'interface** sFlow (counter samples à 30 s : mesure exacte) quand ils
+    couvrent la fenêtre et fournissent au moins un bucket entièrement couvert ; les flux échantillonnés ne
+    servent plus qu'à la **répartition par classe** (les octets d'un bucket sont répartis au prorata des
+    flux observés dans ce bucket). Sans compteurs exploitables, repli sur les flux, signalé dans le constat.
     Distingue un dépassement de classe alors que le lien n'est pas plein (policer/shaper) d'un lien plein.
     """
+    logger.debug("check_saturation_and_overflow : sortie={}, fenêtre=[{}, {}]", only_site or "toutes", w.start, w.end)
     out: list[Finding] = []
     th = p.thresholds
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
             series = c.bytes_timeseries(w, exit_filter(ex.exporter, ex.ifindex, d))
-            by_ts: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
-            samples = 0
+            by_ts: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+            samples_by_ts: dict[int, int] = defaultdict(int)
             for r in series:
-                by_ts[r["ts"]][r["dscp"]] += r["bytes"]
-                samples += r["samples"]
+                key = _bucket_key(r["ts"], w)
+                if key is None:
+                    continue
+                by_ts[key][r["dscp"]] += r["bytes"]
+                samples_by_ts[key] += r["samples"]
             subject = f"{site.name}/{ex.name}"
-            if not by_ts or not _enough(samples, p):
-                out.append(
-                    _finding(
-                        p,
-                        "saturation",
-                        Severity.INCONCLUSIVE,
-                        subject,
-                        f"{samples} échantillons : insuffisant",
-                        site=site,
-                        direction=d,
-                        samples=samples,
+            rates = _exit_rates(c, ex, w, d)
+            full: list[int] = []
+            if rates is not None and rates.usable and 100 * rates.coverage >= th["counter_min_coverage_pct"]:
+                # seuls les buckets entièrement couverts portent un débit exact ; un bucket partiel
+                # (bord de fenêtre, trou d'échantillonnage) n'est jamais complété par du trafic nul
+                full = [ts for ts, cov in rates.bucket_covered_s.items() if cov >= w.bucket_seconds - 1e-6]
+            counters_ok = bool(full)
+            if counters_ok:
+                assert rates is not None  # pour le typage : counters_ok le garantit
+                util = {ts: 100 * (rates.bucket_bytes[ts] * 8 / w.bucket_seconds) / ex.capacity_bps for ts in full}
+                # les échantillons ne comptent que sur les buckets qui fondent le verdict
+                samples = sum(samples_by_ts.get(ts, 0) for ts in full)
+                source = "counters"
+                note = f"compteurs (couverture {100 * rates.coverage:.0f}%)"
+            else:
+                samples = sum(samples_by_ts.values())
+                if not by_ts or not _enough(samples, p):
+                    out.append(
+                        _finding(
+                            p,
+                            "saturation",
+                            Severity.INCONCLUSIVE,
+                            subject,
+                            f"{samples} échantillons : insuffisant",
+                            site=site,
+                            direction=d,
+                            samples=samples,
+                        )
                     )
-                )
-                continue
-            sec = w.bucket_seconds
-            util = {ts: 100 * (sum(v.values()) * 8 / sec) / ex.capacity_bps for ts, v in by_ts.items()}
+                    continue
+                util = {ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_bps for ts, v in by_ts.items()}
+                source = "flows"
+                note = "repli sur les flux échantillonnés (compteurs absents ou insuffisants)"
             p95 = _p95(list(util.values()))
             peak_ts = max(util, key=util.get)
             over_warn = sum(1 for u in util.values() if u >= th["link_util_warn_pct"])
@@ -276,36 +351,95 @@ def check_saturation_and_overflow(
                     "saturation",
                     sev,
                     subject,
-                    f"p95 {p95:.0f}% de la capacité, pic {util[peak_ts]:.0f}% à {peak_ts}",
+                    f"p95 {p95:.0f}% de la capacité, pic {util[peak_ts]:.0f}% à {peak_ts} ({note})",
                     site=site,
                     direction=d,
-                    samples=samples,
+                    samples=samples if source == "flows" else None,  # compteurs : mesure exacte, pas d'incertitude
                     evidence={
                         "p95_pct": p95,
                         "peak_ts": peak_ts,
                         "buckets_over_warn": over_warn,
                         "buckets": len(util),
                         "capacity_bps": ex.capacity_bps,
+                        "utilization_source": source,
+                        **(
+                            {
+                                "counter_coverage_pct": 100 * rates.coverage,
+                                "counter_resets": rates.resets,
+                                "interpolated_buckets": len(rates.interpolated_buckets),
+                                "partial_buckets": len(
+                                    [
+                                        ts
+                                        for ts in rates.bucket_bytes
+                                        if rates.bucket_covered_s.get(ts, 0) < w.bucket_seconds - 1e-6
+                                    ]
+                                ),
+                            }
+                            if rates
+                            else {}
+                        ),
                     },
                 )
             )
+            # buckets où la répartition par classe est mesurable (des flux existent) ; les autres
+            # ne prouvent ni débordement ni absence de débordement
+            evaluable = [ts for ts in util if sum(by_ts.get(ts, {}).values()) > 0]
+            # seuls les échantillons des buckets évaluables fondent les verdicts de débordement
+            evaluable_samples = sum(samples_by_ts.get(ts, 0) for ts in evaluable)
             for cls in p.classes:
                 if cls.max_share_pct is None:
                     continue
+                if not _enough(evaluable_samples, p):
+                    out.append(
+                        _finding(
+                            p,
+                            "class_overflow",
+                            Severity.INCONCLUSIVE,
+                            f"{subject}/{cls.name}",
+                            f"{evaluable_samples} échantillons sur les buckets évaluables : insuffisant",
+                            site=site,
+                            direction=d,
+                            samples=evaluable_samples,
+                        )
+                    )
+                    continue
+                if len(evaluable) < th["overflow_min_buckets"]:
+                    out.append(
+                        _finding(
+                            p,
+                            "class_overflow",
+                            Severity.INCONCLUSIVE,
+                            f"{subject}/{cls.name}",
+                            f"répartition par classe sur {len(evaluable)} buckets seulement",
+                            site=site,
+                            direction=d,
+                            samples=evaluable_samples,
+                            evidence={"evaluable_buckets": len(evaluable), "utilization_source": source},
+                        )
+                    )
+                    continue
                 budget = ex.capacity_bps * cls.max_share_pct / 100
-                over = [
-                    ts
-                    for ts, v in by_ts.items()
-                    if sum(b for dscp, b in v.items() if dscp in cls.dscp) * 8 / sec > budget
-                ]
-                busy = [ts for ts in over if util[ts] >= th["link_util_warn_pct"]]
+                over: list[int] = []
+                busy: list[int] = []
+                for ts in evaluable:
+                    flow_total = sum(by_ts[ts].values())
+                    if counters_ok:
+                        class_bytes = rates.bucket_bytes.get(ts, 0.0) * (
+                            sum(b for dscp, b in by_ts[ts].items() if dscp in cls.dscp) / flow_total
+                        )
+                    else:
+                        class_bytes = sum(b for dscp, b in by_ts[ts].items() if dscp in cls.dscp)
+                    if class_bytes * 8 / w.bucket_seconds > budget:
+                        over.append(ts)
+                        if util[ts] >= th["link_util_warn_pct"]:
+                            busy.append(ts)
                 s2 = Severity.WARN if len(over) >= th["overflow_min_buckets"] else Severity.OK
                 reason = (
                     "lien chargé : dimensionnement global"
                     if len(busy) * 2 > len(over)
                     else "lien non saturé : policer/shaper"
                 )
-                msg = f"{len(over)}/{len(util)} buckets au-dessus du budget" + (f" ({reason})" if over else "")
+                msg = f"{len(over)}/{len(evaluable)} buckets au-dessus du budget" + (f" ({reason})" if over else "")
                 out.append(
                     _finding(
                         p,
@@ -315,10 +449,16 @@ def check_saturation_and_overflow(
                         msg,
                         site=site,
                         direction=d,
-                        samples=samples,
-                        evidence={"over": len(over), "over_and_busy": len(busy)},
+                        samples=evaluable_samples,
+                        evidence={
+                            "over": len(over),
+                            "over_and_busy": len(busy),
+                            "evaluable_buckets": len(evaluable),
+                            "utilization_source": source,
+                        },
                     )
                 )
+    logger.debug("check_saturation_and_overflow : {} constats", len(out))
     return out
 
 
@@ -364,6 +504,113 @@ def check_congestion(
                     evidence=drops,
                 )
             )
+    return out
+
+
+def check_counter_consistency(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """Somme des flux extrapolés vs octets des compteurs, par sortie et sens.
+
+    Compare comme avec comme : même exporteur, même interface, même sens, et **mêmes buckets** — seuls les
+    buckets entièrement couverts par les compteurs entrent dans la somme des flux comme dans celle des
+    compteurs (une couverture partielle ne fabrique pas un faux écart). Un écart au-delà de la marge
+    (erreur attendue de l'échantillonnage, plancher ``counter_consistency_max_dev_pct``) signale un
+    **facteur d'échantillonnage faux** (P6 mal calibré) — les compteurs, eux, sont exacts. Les cas
+    « compteurs à zéro mais flux positifs » et « compteurs positifs mais aucun flux » sont traités
+    explicitement : la mesure est cassée d'un côté ou de l'autre.
+    """
+    logger.debug("check_counter_consistency : sortie={}, fenêtre=[{}, {}]", only_site or "toutes", w.start, w.end)
+    out: list[Finding] = []
+    th = p.thresholds
+    for site, ex in _exits(p, only_site):
+        for d in _DIRS:
+            rates = _exit_rates(c, ex, w, d)
+            if rates is None or not rates.usable:
+                continue  # rien à comparer : le repli éventuel est déjà signalé par « saturation »
+            # buckets entièrement couverts par les compteurs : la comparaison se fait sur eux
+            full = [ts for ts, cov in rates.bucket_covered_s.items() if cov >= w.bucket_seconds - 1e-6]
+            if not full:
+                continue
+            counter_sum = sum(rates.bucket_bytes[ts] for ts in full)
+            series = c.bytes_timeseries(w, exit_filter(ex.exporter, ex.ifindex, d))
+            by_ts: dict[int, float] = defaultdict(float)
+            full_set = set(full)
+            samples = 0
+            for r in series:
+                key = _bucket_key(r["ts"], w)
+                if key is None:
+                    continue
+                by_ts[key] += r["bytes"]
+                if key in full_set:
+                    # seuls les échantillons des buckets comparés fondent la marge d'erreur
+                    samples += r["samples"]
+            flows = sum(by_ts.get(ts, 0.0) for ts in full)
+            subject = f"{site.name}/{ex.name}"
+            if counter_sum <= 0 and flows <= 0:
+                continue  # rien à comparer
+            err = rel_error_pct(samples, th.get("bytes_error_margin", 1.0))
+            margin = max(err, th["counter_consistency_max_dev_pct"])
+            if counter_sum <= 0:
+                # compteurs à zéro mais flux positifs : l'écart est sans mesure
+                out.append(
+                    _finding(
+                        p,
+                        "counter_consistency",
+                        Severity.WARN,
+                        subject,
+                        f"compteurs à zéro mais flux extrapolés {flows / 1e9:.2f} Go : filtre ou facteur d'échantillonnage suspect (P6)",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence={"flows_bytes": flows, "counter_bytes": 0.0, "buckets": len(full)},
+                    )
+                )
+                continue
+            dev = 100 * abs(flows - counter_sum) / counter_sum
+            if flows <= 0:
+                # compteurs positifs mais aucun flux sur les mêmes buckets
+                out.append(
+                    _finding(
+                        p,
+                        "counter_consistency",
+                        Severity.WARN,
+                        subject,
+                        f"compteurs {counter_sum / 1e9:.2f} Go mais aucun flux sur les mêmes buckets : champs ou filtres à vérifier",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence={"flows_bytes": 0.0, "counter_bytes": counter_sum, "buckets": len(full)},
+                    )
+                )
+                continue
+            sev = Severity.WARN if dev > margin else Severity.OK
+            msg = (
+                f"flux extrapolés {flows / 1e9:.2f} Go vs compteurs {counter_sum / 1e9:.2f} Go : "
+                f"écart {dev:.0f}% (marge {margin:.0f}%)"
+            )
+            if sev == Severity.WARN:
+                msg += " — facteur d'échantillonnage suspect (P6)"
+            out.append(
+                _finding(
+                    p,
+                    "counter_consistency",
+                    sev,
+                    subject,
+                    msg,
+                    site=site,
+                    direction=d,
+                    samples=samples,
+                    evidence={
+                        "flows_bytes": flows,
+                        "counter_bytes": counter_sum,
+                        "deviation_pct": dev,
+                        "margin_pct": margin,
+                        "counter_resets": rates.resets,
+                        "counter_coverage_pct": 100 * rates.coverage,
+                        "buckets": len(full),
+                    },
+                )
+            )
+    logger.debug("check_counter_consistency : {} constats", len(out))
     return out
 
 
@@ -541,6 +788,7 @@ def run_all(
     findings += check_untrusted_ports(c, p, w)
     findings += check_class_share(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
+    findings += check_counter_consistency(c, p, w, only_site)
     findings += check_congestion(c, p, w, counters, only_site)
     findings += check_exit_balance(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)

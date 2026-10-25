@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from opensearchpy import OpenSearch
 
-__all__ = ["FIELDS", "ElastiflowClient", "Window", "configure_fields", "exit_filter"]
+__all__ = [
+    "COUNTER_FIELDS",
+    "DEFAULT_COUNTERS_INDEX",
+    "FIELDS",
+    "ElastiflowClient",
+    "Window",
+    "configure_counter_fields",
+    "configure_fields",
+    "exit_filter",
+]
 
 # À VÉRIFIER contre le schéma de la version ElastiFlow déployée (les noms varient selon les versions).
 FIELDS = {
@@ -27,7 +36,39 @@ FIELDS = {
     "sampling": "flow.sampling.interval",
 }
 
+# Compteurs d'interface (counter samples sFlow) : à VÉRIFIER contre le schéma de la version ElastiFlow déployée
+# (valeurs relevées sur les index patterns « telemetry » publiés par ElastiFlow ; netif.* en schéma ECS).
+COUNTER_FIELDS = {
+    "exporter": "flow.export.host.name",
+    "ifindex": "netif.index",
+    "bytes_in": "netif.bytes.in",
+    "bytes_out": "netif.bytes.out",
+}
+
+# Counter samples sFlow. Renommé « elastiflow-telemetry_flow-* » en ElastiFlow 6.2 (avant : « elastiflow-telemetry-* »,
+# ce qui attrapait aussi la télémétrie SNMP) ; surchargé par la calibration.
+DEFAULT_COUNTERS_INDEX = "elastiflow-telemetry_flow-*"
+
 _UNITS = {"s": 1, "m": 60, "h": 3600}
+
+
+def configure_counter_fields(overrides: dict[str, str]) -> None:
+    """Surcharge les noms de champs de compteurs (relevés en phase 0, P4) sans changer le dictionnaire de référence.
+
+    Args:
+        overrides: ``{clé logique: nom de champ ElastiFlow}``.
+
+    Raises:
+        ValueError: Si une clé logique est inconnue.
+    """
+    logger.debug("configure_counter_fields: entrée | {} surcharges", len(overrides))
+    unknown = set(overrides) - set(COUNTER_FIELDS)
+    if unknown:
+        msg = f"Clés de champ de compteurs inconnues : {sorted(unknown)}"
+        logger.debug("configure_counter_fields: sortie (clés inconnues) | {}", sorted(unknown))
+        raise ValueError(msg)
+    COUNTER_FIELDS.update(overrides)
+    logger.debug("configure_counter_fields: sortie | {} champs", len(COUNTER_FIELDS))
 
 
 def configure_fields(overrides: dict[str, str]) -> None:
@@ -84,6 +125,7 @@ class ElastiflowClient:
         index: str = "elastiflow-flow-*",
         scale_by_sampling: bool = True,
         bytes_overhead_per_packet: int = 0,
+        counters_index: str | None = None,
     ) -> None:
         """Initialise le client.
 
@@ -94,9 +136,11 @@ class ElastiflowClient:
                 (résultat de la phase 0, P6 : à ne pas laisser au hasard).
             bytes_overhead_per_packet: Octets à retrancher par paquet pour passer de la base trame à la base IP
                 (14 si ElastiFlow additionne des octets de trame ; résultat de la phase 0, P5).
+            counters_index: Pattern d'index des counter samples sFlow (défaut : ``DEFAULT_COUNTERS_INDEX``).
         """
         self._os = OpenSearch(hosts=hosts)
         self._index = index
+        self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
         self._scale = scale_by_sampling
         self._overhead = bytes_overhead_per_packet
 
@@ -175,3 +219,72 @@ class ElastiflowClient:
             for t in res
             for d in t["d"]["buckets"]
         ]
+
+    def counter_samples(self, exporter: str, ifindex: int, w: Window, before_s: int = 90) -> list[dict]:
+        """Relevés de compteurs d'interface (counter samples sFlow) triés par horodatage croissant.
+
+        Les compteurs sont cumulés : le débit se calcule par différence entre relevés consécutifs
+        (cf. ``counters.rates_from_counters``). Un relevé avant le début de la fenêtre est inclus
+        (``before_s`` secondes de marge) pour couvrir le premier bucket.
+
+        Args:
+            exporter: Nom de l'équipement exporteur.
+            ifindex: ifIndex de l'interface.
+            w: Fenêtre d'analyse.
+            before_s: Marge avant le début de la fenêtre pour attraper le relevé précédent.
+
+        Returns:
+            Lignes ``{"ts": datetime, "in": octets entrants, "out": octets sortants}`` (valeurs ``None`` si absentes).
+        """
+        logger.debug(
+            "counter_samples : exporter={} ifindex={} fenêtre=[{}, {}]",
+            exporter,
+            ifindex,
+            w.start,
+            w.end,
+        )
+        start = w.start - timedelta(seconds=before_s)
+        body = {
+            "size": 10000,
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": start.isoformat(), "lt": w.end.isoformat()}}},
+                        {"term": {COUNTER_FIELDS["exporter"]: exporter}},
+                        {"term": {COUNTER_FIELDS["ifindex"]: ifindex}},
+                    ]
+                }
+            },
+            # docvalue_fields : insensible à la structure de _source (clés à points ou champs imbriqués)
+            "docvalue_fields": [
+                {"field": "@timestamp", "format": "epoch_millis"},
+                COUNTER_FIELDS["bytes_in"],
+                COUNTER_FIELDS["bytes_out"],
+            ],
+            "sort": [{"@timestamp": "asc"}],
+        }
+        rows: list[dict] = []
+        try:
+            hits = self._os.search(index=self._counters_index, body=body)["hits"]["hits"]
+        except Exception as exc:  # toute erreur d'accès remonte à l'appelant, qui repliera sur les flux
+            logger.warning("Requête de compteurs échouée pour {}:if{} : {}", exporter, ifindex, exc)
+            raise
+        if len(hits) >= 10000:
+            logger.warning("Compteurs de {}:if{} tronqués à 10000 relevés : réduire la fenêtre", exporter, ifindex)
+        for hit in hits:
+            fields = hit.get("fields", {})
+            ts_ms = fields.get("@timestamp", [None])[0]
+            bi = fields.get(COUNTER_FIELDS["bytes_in"], [None])[0]
+            bo = fields.get(COUNTER_FIELDS["bytes_out"], [None])[0]
+            if ts_ms is None or (bi is None and bo is None):
+                continue
+            rows.append(
+                {
+                    # epoch_millis peut arriver en nombre ou en chaîne : passer par float()
+                    "ts": datetime.fromtimestamp(float(ts_ms) / 1000, tz=UTC),
+                    "in": bi,
+                    "out": bo,
+                }
+            )
+        logger.debug("counter_samples : {} relevés pour {}:if{}", len(rows), exporter, ifindex)
+        return rows

@@ -49,6 +49,7 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         a.opensearch,
         scale_by_sampling=not cal.sampling_already_applied,
         bytes_overhead_per_packet=cal.bytes_overhead_per_packet,
+        counters_index=cal.counters_index,
     )
     return client, cal, _window(a.minutes, lag)
 

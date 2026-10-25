@@ -7,8 +7,8 @@
     catalog.yaml ────► advisor/catalog.py
     cfg Comware ─────► comware/ (parser, convert, extract) ──► policy.extracted.yaml + rapport
                                           │
-    ElastiFlow (OpenSearch) ◄── elastiflow.py   agrégations sFlow (composite, date_histogram)
-    Compteurs Comware/SNMP  ◄── counters.py     drops par file (optionnel, preuve directe)
+    ElastiFlow (OpenSearch) ◄── elastiflow.py   agrégations de flux + counter samples d'interface (compteurs exacts)
+    Compteurs Comware/SNMP  ◄── counters.py     débits d'interface (sFlow) + drops par file (optionnel, preuve directe)
                                           │
                        checks.py ──► Finding[] ──► rapport JSON ──► verify.py (avant/après)
                        sampling.py ─► sampling recommandé, erreur attendue, coût
@@ -22,9 +22,9 @@
 | `policy.py` | Chargement YAML, `DEFAULT_THRESHOLDS`, `parse_ports`, import des règles ACL Comware (partiel) |
 | `calibration.py` | Chargement de la calibration, application des noms de champs |
 | `sampling.py` | `recommended_sampling`, `expected_error_pct`, `worst_case_samples_per_s`, `samples_needed` |
-| `elastiflow.py` | `FIELDS` (surchargeable), `configure_fields`, `exit_filter`, `bytes_by` (paginé), `bytes_timeseries`, base de comptage |
-| `checks.py` | Contrôles par site/sortie/sens, `run_all` |
-| `counters.py` | Interface `CounterSource` (drops par file) ; implémentation Comware à écrire |
+| `elastiflow.py` | `FIELDS`/`COUNTER_FIELDS` (surchargeables), `configure_fields`/`configure_counter_fields`, `exit_filter`, `bytes_by` (paginé), `bytes_timeseries`, `counter_samples` (index de télémétrie), base de comptage |
+| `checks.py` | Contrôles par site/sortie/sens, `run_all` ; saturation/class_overflow sur les compteurs avec repli signalé, `counter_consistency` |
+| `counters.py` | `rates_from_counters` (débits exacts : resets, rebouclage 32 bits, couverture) ; interface `CounterSource` (drops par file) ; implémentation Comware à écrire |
 | `comware/` | `parser` (blocs, ACL, object-groups, classifiers, behaviors, policies, interfaces), `convert` (wildcard, ports, DSCP), `extract` (règles de marquage, politique, rapport) |
 | `advisor/` | `catalog`, `discover`, `recommend`, `simulate`, `render_comware` |
 | `verify.py` | Comparaison de deux rapports |
