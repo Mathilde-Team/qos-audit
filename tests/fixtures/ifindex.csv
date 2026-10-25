@@ -1,0 +1,3 @@
+exporter,ifindex,name
+rtr-a-01,10,GigabitEthernet1/0/10
+rtr-a-01,49,GigabitEthernet1/0/49

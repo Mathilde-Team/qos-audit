@@ -1,0 +1,21 @@
+# Catalogue applicatif VALIDÉ par l'humain : application -> classe cible (noms de classes de la politique).
+# L'outil propose, il ne décide jamais de la criticité métier.
+applications:
+  - name: voix_rtp
+    target_class: ef
+    match: {protocol: udp, ports: "16384-32767"}
+    servers_cidr: ["10.10.5.0/24"]     # PBX / SBC (réduit les faux positifs sur les ports éphémères)
+    confidence: high
+  - name: sip
+    target_class: d1                   # AF31 supposé : à confirmer avec l'opérateur
+    match: {protocol: udp, ports: "5060"}
+    confidence: high
+  - name: smtp
+    target_class: d3                   # courriel élastique : classe de données la moins prioritaire
+    match: {protocol: tcp, ports: "25"}
+    confidence: medium
+  - name: sauvegarde
+    target_class: bf                   # l'opérateur n'a pas de classe sous BF : shaper/plage horaire locaux (voir Q5-3)
+    match: {protocol: tcp, ports: "6160-6162"}   # EXEMPLE : à adapter à vos outils de sauvegarde
+    profile: {bulk: true, plage_horaire: "22-06"}
+    confidence: medium

@@ -1,0 +1,67 @@
+# Politique QoS THÉORIQUE alignée sur les classes de l'OPÉRATEUR : EF, AF41, D1, D2, D3, BF.
+# Source de vérité (écrite à la main ou extraite des ACL + classifier/behavior Comware).
+dscp_names: {46: EF, 34: AF41, 26: AF31, 18: AF21, 10: AF11, 8: CS1, 0: BE, 48: CS6, 40: CS5}
+
+classes:
+  - name: ef
+    dscp: [46]                 # « EF 45 » : DSCP 45 ou part de bande ? à lever auprès de l'opérateur (P9)
+    priority: 1                # 1 = priorité stricte
+    max_share_pct: 45          # HYPOTHÈSE (« EF 45 » = 45 % de la bande) : à confirmer ; budget = part de capacity_bps
+    match:                     # ACL théoriques (préférer IP serveur + ports : les plages seules sont ambigües)
+      - {protocol: udp, dst_ports: "16384-32767"}
+  - name: af41
+    dscp: [34]
+    priority: 2
+    match: []                  # budget (CIR de la classe) à renseigner d'après le contrat
+  - name: d1                   # données prioritaires
+    dscp: [26]
+    dscp_confirmed: false      # AF31 supposé : à confirmer auprès de l'opérateur
+    priority: 3
+    match:
+      - {protocol: udp, dst_ports: "5060"}
+      - {protocol: tcp, dst_ports: "5060-5061"}
+  - name: d2                   # données intermédiaires
+    dscp: [18]
+    dscp_confirmed: false      # AF21 supposé
+    priority: 4
+    match:
+      - {dst_cidr: "10.20.0.0/16", protocol: tcp, dst_ports: "443"}
+  - name: d3                   # données moins prioritaires
+    dscp: [10]
+    dscp_confirmed: false      # AF11 supposé
+    priority: 5
+    match: []
+  - name: bf                   # best effort
+    dscp: [0]
+    priority: 9
+    match: []
+
+trust:                         # frontière de confiance : ces ports ne doivent PAS injecter de DSCP privilégié
+  untrusted:
+    - {exporter: sw-acc-01, ifindex: 10}
+  allowed_dscp_from_untrusted: [0]
+
+sites:                         # N sites, 1 à 4 sorties sFlow chacun
+  - name: site-a
+    exits:
+      - {name: wan1, exporter: rtr-a-01, ifindex: 49, speed_bps: 1000000000, capacity_bps: 200000000, role: principal}
+      - {name: wan2, exporter: rtr-a-02, ifindex: 49, speed_bps: 100000000, capacity_bps: 50000000, role: secours}
+
+# Seuils : toute clé absente prend la valeur de policy.DEFAULT_THRESHOLDS.
+thresholds:
+  conformity_min_pct: 98
+  link_util_warn_pct: 70       # sur la capacité contractuelle (capacity_bps)
+  link_util_crit_pct: 85
+  ecn_ce_warn_pct: 0.1
+  min_samples: 300             # ~ ±11 % à 95 % ; en dessous : verdict "non concluant"
+  overflow_min_buckets: 3
+  unknown_dscp_max_pct: 1
+  secours_active_max_pct: 5
+  bytes_error_margin: 1.25     # facteur sur l'erreur pour des octets de tailles variables (trafic réel)
+  sampling_floor_ratio: 0.05   # plancher à mesurer : 5 % de la capacité de la sortie
+  sampling_window_s: 300       # fenêtre d'analyse du dimensionnement
+  sampling_size_bytes: 1500    # paquet de référence pour la précision
+  sampling_error_target_pct: 5 # erreur cible à 95 %
+  sampling_error_crit_pct: 15  # au-delà : sampling inadapté (CRIT)
+  sampling_max_samples_per_s: 3200   # pire cas (paquets de 100 o) : au-delà, risque CPU / export
+  calibration_max_age_days: 180

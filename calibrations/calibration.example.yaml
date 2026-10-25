@@ -1,0 +1,29 @@
+# Résultats de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) consommés par qos-audit.
+# Tant que ce fichier est incomplet, `audit` le signale (contrôle `calibration`).
+reference: VAL-ELASTIFLOW-001
+validated_on: null             # AAAA-MM-JJ : date de signature du verdict (section 10 du document de validation)
+
+elastiflow:
+  version: "à renseigner"
+  fields:                      # P4 : noms relevés sur un enregistrement de test (clés = elastiflow.FIELDS)
+    sampling: flow.sampling_interval
+  sampling_already_applied: null   # P5/P6 : true si ElastiFlow applique déjà le facteur d'échantillonnage
+  bytes_overhead_per_packet: 0     # P5 : 14 si ElastiFlow additionne des octets de trame (la politique est en octets IP)
+  ingest_lag_minutes: 5            # P7 : délai d'agrégation ; la fenêtre d'audit se termine à « maintenant - délai »
+
+exporters:                     # P2 : `display sflow` sur chaque équipement
+  rtr-a-01:
+    model: "à renseigner"
+    comware_version: "à renseigner"
+    sampling_direction: inbound    # inbound (entrée seule) | both (entrée et sortie : double comptage possible)
+    counter_interval_s: 30         # 30 recommandé ; 300 = valeur par défaut
+    interfaces:
+      - {ifindex: 49, name: "WAN1", sampling_rate: 128}
+      - {ifindex: 10, name: "LAN accès", sampling_rate: 128}
+  rtr-a-02:
+    model: "à renseigner"
+    comware_version: "à renseigner"
+    sampling_direction: inbound
+    counter_interval_s: 30
+    interfaces:
+      - {ifindex: 49, name: "WAN2 (secours)", sampling_rate: 32}
