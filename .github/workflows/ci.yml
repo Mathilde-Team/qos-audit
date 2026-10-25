@@ -41,11 +41,12 @@ jobs:
           uvx ruff@0.6.9 format --check --line-length 120 .
 
       # Le paquet est installé en éditable : disposition src/ sans build-system
-      # déclaré, les dépendances de test (pytest, pytest-cov) restent éphémères.
+      # déclaré, les dépendances de test (pytest, pytest-cov) restent éphémères,
+      # versions figées (SOCLE §4 : les versions ne montent que volontairement).
       # Couverture des branches incluse (SOCLE §4) ; le seuil bloquant sera lu
       # dans pyproject.toml dès que l'issue #5 l'y déclarera.
       - name: Tests et couverture
         run: >
           uv run --no-project --python 3.11
-          --with pytest --with pytest-cov --with-editable .
+          --with pytest==9.1.1 --with pytest-cov==7.1.0 --with-editable .
           pytest --cov=src/qos_audit --cov-branch --cov-report=term-missing
