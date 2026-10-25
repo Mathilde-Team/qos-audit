@@ -12,7 +12,7 @@ from datetime import date, datetime
 
 from loguru import logger
 
-from qos_audit.calibration import Calibration
+from qos_audit.calibration import Calibration, ExporterCal, Validation
 from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import Direction, Exit, Finding, FlowMatch, Policy, Severity, Site, rel_error_pct
@@ -733,8 +733,98 @@ def check_sampling_drift(c: ElastiflowClient, p: Policy, w: Window, cal: Calibra
     return out
 
 
+_ALLEGEE = "revalidation allégée (P4 à P7 et A2)"
+_COMPLETE = "revalidation complète"
+
+
+def _rates(e: ExporterCal) -> set[int]:
+    """Sampling-rates configurés sur les interfaces d'un exporteur."""
+    return {i.sampling_rate for i in e.interfaces if i.sampling_rate is not None}
+
+
+def _scope_drift(e: ExporterCal, v: Validation, cal: Calibration) -> list[str]:
+    """Écarts entre l'état déployé d'un exporteur et un périmètre validé (protocole §10.4).
+
+    Args:
+        e: Exporteur tel que déployé.
+        v: Périmètre validé (le sien, ou celui de l'exporteur qui le couvre).
+        cal: Calibration (version d'ElastiFlow déployée).
+
+    Returns:
+        Messages, revalidation à prévoir comprise ; vide si l'exporteur est couvert.
+    """
+    logger.debug("_scope_drift: entrée | {}", e.name)
+    out: list[str] = []
+    if e.model != v.model:
+        out.append(f"modèle {e.model or '?'} ≠ modèle validé {v.model or '?'} : {_COMPLETE}")
+    if e.comware_version != v.comware_version:
+        out.append(
+            f"firmware {v.comware_version or '?'} → {e.comware_version or '?'} depuis la validation : {_ALLEGEE}"
+        )
+    if cal.elastiflow_version != v.elastiflow_version:
+        out.append(
+            f"ElastiFlow {v.elastiflow_version or '?'} → {cal.elastiflow_version or '?'} depuis la validation : {_ALLEGEE}"
+        )
+    if e.sampling_direction != v.sampling_direction:
+        out.append(f"sens d'échantillonnage {v.sampling_direction} → {e.sampling_direction} : {_ALLEGEE}")
+    nouveaux = sorted(_rates(e) - set(v.sampling_rates))
+    if v.sampling_rates and nouveaux:
+        out.append(f"sampling 1:{', 1:'.join(map(str, nouveaux))} non validé : {_ALLEGEE}")
+    logger.debug("_scope_drift: sortie | {} écart(s)", len(out))
+    return out
+
+
+def _covering(e: ExporterCal, cal: Calibration) -> ExporterCal | None:
+    """Exporteur validé qui couvre ``e`` : même modèle et version, configuré à l'identique (§10.4)."""
+    logger.debug("_covering: entrée | {}", e.name)
+    for other in sorted(cal.exporters.values(), key=lambda x: x.name):
+        v = other.validation
+        if other.name != e.name and v is not None and v.validated_on is not None and not _scope_drift(e, v, cal):
+            logger.debug("_covering: sortie | {} couvert par {}", e.name, other.name)
+            return other
+    logger.debug("_covering: sortie | {} non couvert", e.name)
+    return None
+
+
+def _exporter_scope(e: ExporterCal, cal: Calibration, today: date, max_age_days: int) -> list[str]:
+    """Messages WARN du périmètre validé d'un exporteur (vide : couvert et à jour)."""
+    logger.debug("_exporter_scope: entrée | {}", e.name)
+    v = e.validation
+    if v is None:
+        other = _covering(e, cal)
+        out = (
+            [] if other else [f"aucun périmètre validé (modèle {e.model or '?'}, firmware {e.comware_version or '?'})"]
+        )
+        logger.debug("_exporter_scope: sortie | {} sans bloc, {} message(s)", e.name, len(out))
+        return out
+    if v.validated_on is None:
+        logger.debug("_exporter_scope: sortie | {} jamais validé", e.name)
+        return ["périmètre renseigné mais jamais validé (date absente)"]
+    out = _scope_drift(e, v, cal)
+    age = (today - v.validated_on).days
+    if age > max_age_days:
+        out.append(f"validé il y a {age} jours : {_ALLEGEE}")
+    logger.debug("_exporter_scope: sortie | {} {} message(s)", e.name, len(out))
+    return out
+
+
 def check_calibration(p: Policy, cal: Calibration, today: date | None = None) -> list[Finding]:
-    """Santé de l'instrument : la validation d'ElastiFlow est-elle faite, complète et récente ?"""
+    """Santé de l'instrument : la validation d'ElastiFlow est-elle faite, complète et récente ?
+
+    Le périmètre validé est contrôlé exporteur par exporteur (issue #35) : un exporteur sans validation
+    propre doit être couvert par un exporteur validé de même modèle et version, configuré à l'identique ;
+    une mise à jour du firmware ou d'ElastiFlow depuis la validation, ou une validation trop ancienne,
+    passent en WARN avec la revalidation à prévoir.
+
+    Args:
+        p: Politique (exporteurs utilisés et seuils).
+        cal: Calibration.
+        today: Date du jour (tests).
+
+    Returns:
+        Constats WARN, ou un constat OK unique.
+    """
+    logger.debug("check_calibration: entrée | {} exporteur(s) calibré(s)", len(cal.exporters))
     today = today or date.today()
     th = p.thresholds
     out: list[Finding] = []
@@ -757,7 +847,11 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
             add(name, "échantillonnage entrée+sortie : double comptage possible, non traité")
         if e.counter_interval_s > 60:
             add(name, f"intervalle de compteurs {e.counter_interval_s} s (30 s recommandé)")
-    return out or [_finding(p, "calibration", Severity.OK, "elastiflow", "calibration validée et à jour")]
+        for msg in _exporter_scope(e, cal, today, th["calibration_max_age_days"]):
+            add(name, msg)
+    result = out or [_finding(p, "calibration", Severity.OK, "elastiflow", "calibration validée et à jour")]
+    logger.debug("check_calibration: sortie | {} constat(s)", len(result))
+    return result
 
 
 def run_all(

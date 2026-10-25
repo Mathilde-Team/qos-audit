@@ -9,6 +9,12 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Calibration multi-sites : bloc `validation` par exporteur dans `calibration.yaml` (date, modèle, firmware,
+  version d'ElastiFlow, sens, interface et sampling-rates validés, protocole §10.4) ; le contrôle `calibration`
+  signale un exporteur non couvert, une mise à jour du firmware ou d'ElastiFlow depuis la validation, un
+  sampling non validé ou une validation trop ancienne, avec la revalidation à prévoir (allégée ou complète).
+  Procédure de revalidation allégée dans `docs/CALIBRATION.md`. Palier de couverture relevé de 80 à 82 %
+  (mesure 82,07 %) (#35).
 - `policy.parse_comware_acl` s'appuie sur le parser et la conversion de `comware/` (une seule implémentation
   wildcard → CIDR et ports `eq/gt/lt/neq/range`, source et destination) ; TODO remplacé par la liste de ce qui
   reste non modélisé (#11).
