@@ -1,11 +1,20 @@
-# Changelog
+# Journal des versions
 
-## Non publié
+Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Les numéros suivent [SemVer](https://semver.org/lang/fr/), et la version de `pyproject.toml` est égale au tag.
 
+Publier une version : renommer « ## [Non publié] » en « ## [X.Y.Z] - AAAA-MM-JJ » (X.Y.Z = version de `pyproject.toml`),
+relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/workflows/release.yml` publie la release.
+
+## [Non publié]
+
+### Ajouté
+
+- Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
+  notes tirées de ce journal, archive des sources jointe (#4).
 - Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
   (`uv.lock`, groupe `dev` avec ruff figé), couverture des branches et palier bloquant à 76 % (#1, #5).
 
-## Session 04 (2026-10-25)
+### Session 04 (2026-10-25)
 
 - **Extraction de la QoS depuis les configurations Comware** (`qos-audit extract`, package `comware/`) : ACL (basic, advanced,
   nommées, object-groups), classifiers, behaviors (`remark dscp`, `remark ip-precedence`), policies, application sur interfaces.
@@ -20,7 +29,7 @@
 - Qualité : 50 tests, ruff.
 - Non traité : extraction de la configuration sFlow par interface (session 05), normalisation des noms d'interface, `qos trust`/`car`/`queue`.
 
-## Session 03 (2026-10-25)
+### Session 03 (2026-10-25)
 
 - **Calibration** (`calibration.yaml`, `calibration.py`) : noms de champs (P4), facteur d'échantillonnage déjà appliqué (P6),
   correction de base trame/IP (P5), délai d'ingestion (P7), contexte sFlow par équipement et interface (P2), date de validation.
@@ -34,7 +43,7 @@
 - Qualité : 38 tests, ruff.
 - Reporté en session 04 : utilisation exacte via compteurs d'interface (G6), `ComwareCliCounters`.
 
-## Session 02 (2026-10-24)
+### Session 02 (2026-10-24)
 
 - Modèle **multi-sites** : `Site` (1 à 4 sorties), `Exit` avec `speed_bps`, `capacity_bps` et `role` ; remplace `links`.
 - Contrôles par **sens** (sortant et entrant) ; nouveau `dscp_plan` (DSCP hors plan, remarquage opérateur).
@@ -46,6 +55,6 @@
 - Qualité : ruff (120), pre-commit, tests (10 passent).
 - Documentation : README refondu, `docs/` (architecture, contrôles, limites, advisor).
 
-## Session 01 (2026-10-24)
+### Session 01 (2026-10-24)
 
 - Squelette initial : politique YAML, client ElastiFlow, contrôles de base, CLI `audit`.
