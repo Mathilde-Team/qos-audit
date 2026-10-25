@@ -9,6 +9,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Journalisation (SOCLE §8) : scripts d'audit AST `audit_debug_sorties.py` et `audit_debug_entrees.py`
+  + tests `test_loguru_regles.py` (chaque `except` journalisé, aucun `import logging`, logger de module,
+  références figées) ; instrumentation loguru de 11 modules ; l'`except` muet du parser comware
+  est journalisé (#6).
+
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
 

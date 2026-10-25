@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 
+from loguru import logger
+
 __all__ = ["Direction", "Exit", "Finding", "FlowMatch", "Policy", "QosClass", "Severity", "Site", "rel_error_pct"]
 
 
@@ -19,7 +21,9 @@ def rel_error_pct(samples: int, margin: float = 1.0) -> float:
     Returns:
         Erreur relative en pourcentage (``inf`` si aucun échantillon).
     """
-    return 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
+    err = 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
+    logger.debug("rel_error_pct: retour | n={} -> {:.1f} %", samples, err)
+    return err
 
 
 class Severity(IntEnum):

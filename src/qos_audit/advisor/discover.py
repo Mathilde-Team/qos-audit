@@ -8,6 +8,8 @@ from qos_audit.checks import _exits
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import Policy
 
+from loguru import logger
+
 __all__ = ["FlowCluster", "discover_unclassified"]
 
 
@@ -42,6 +44,7 @@ def discover_unclassified(
     Returns:
         Groupes de flux candidats à classification.
     """
+    logger.debug("discover_unclassified: entrée | top={} site={}", top, only_site)
     out: list[FlowCluster] = []
     for site, ex in _exits(p, only_site):
         base = exit_filter(ex.exporter, ex.ifindex, "egress")
@@ -62,4 +65,5 @@ def discover_unclassified(
             )
             for r in rows[:top]
         ]
+    logger.debug("discover_unclassified: retour | {} groupe(s)", len(out))
     return out
