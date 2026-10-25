@@ -90,13 +90,16 @@ def _bucket_key(ts: str, w: Window) -> int | None:
     Returns:
         Le début de bucket, ou ``None`` si l'horodatage est illisible.
     """
+    logger.debug("_bucket_key: entrée | {}", ts)
     try:
         t = datetime.fromisoformat(str(ts))
     except ValueError:
         logger.debug("Horodatage de bucket illisible : {}", ts)
         return None
     sec = w.bucket_seconds
-    return int(t.timestamp() // sec * sec)
+    key = int(t.timestamp() // sec * sec)
+    logger.debug("_bucket_key: sortie | {}", key)
+    return key
 
 
 def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRates | None:
@@ -111,12 +114,15 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
     Returns:
         Les débits, ou ``None`` si la requête échoue (repli sur les flux à la charge de l'appelant).
     """
+    logger.debug("_exit_rates: entrée | {}:if{} {}", ex.exporter, ex.ifindex, d)
     try:
         samples = c.counter_samples(ex.exporter, ex.ifindex, w)
     except Exception as exc:  # noqa: BLE001 — indisponibilité des compteurs : repli signalé sur les flux
         logger.warning("Compteurs indisponibles pour {}:if{} ({}): repli sur les flux", ex.exporter, ex.ifindex, exc)
         return None
-    return rates_from_counters(samples, w, d)
+    rates = rates_from_counters(samples, w, d)
+    logger.debug("_exit_rates: sortie | usable={}", rates.usable)
+    return rates
 
 
 def _exits(p: Policy, only_site: str | None):

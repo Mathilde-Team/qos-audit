@@ -9,8 +9,15 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Journalisation (SOCLE §8) : scripts d'audit AST `audit_debug_sorties.py` et `audit_debug_entrees.py`
+  + tests `test_loguru_regles.py` (chaque `except` journalisé, aucun `import logging`, logger de module,
+  références figées) ; instrumentation loguru de 11 modules ; l'`except` muet du parser comware
+  est journalisé (#6).
+
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
+- Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
+  (`uv.lock`, groupe `dev` avec ruff figé), couverture des branches et palier bloquant à 76 % (#1, #5).
 
 ### Session 05 (2026-10-25)
 
@@ -31,13 +38,8 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 - Calibration : `elastiflow.counters_index` et `elastiflow.counter_fields`.
 - Seuils : `counter_min_coverage_pct`, `counter_consistency_max_dev_pct`.
 - Documentation : contrôles, limites, architecture, calibration mis à jour.
-- Qualité : 90 tests, ruff, couverture lignes+branches mesurée et plancherée dans `pyproject.toml`
-  (`fail_under = 79` sur le combiné, mesuré 79,7 % — 82,2 % lignes, 72,3 % branches ; paliers lignes et
-  branches vérifiés par `scripts/check_coverage_paliers.py`, palier socle à relever à chaque contribution).
-- CI : job « Qualité (qos-audit) » (`.github/workflows/ci.yml`, runners `maison`) exécutant
-  `scripts/qualite.sh` (lint, format, tests, paliers de couverture) ; projet devenu packageable
-  (build-system hatchling) et dépendances de dev déclarées (`[dependency-groups]`), `uv.lock` versionné.
-  Nettoyage d'artefacts accidentellement commis (`.coverage`, `__pycache__`, `*.egg-info`) rendus à `.gitignore`.
+- Qualité : 95 tests ; palier de couverture relevé de 76 à 79 % (mesure 79,78 %, lignes et branches) ;
+  fonctions ajoutées instrumentées (référence d'audit des sorties loguru abaissée à 144).
 
 ### Session 04 (2026-10-25)
 

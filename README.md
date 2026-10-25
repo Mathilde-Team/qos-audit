@@ -49,10 +49,9 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 ## Qualité
 
-    bash scripts/qualite.sh
+    make lint && make test
 
-Le script enchaîne lint, format, tests et vérification des paliers de couverture lignes ET branches
-(socle Mathilde-Team ; paliers déclarés dans `pyproject.toml`, à relever à chaque contribution jusqu'à 95 %).
-La CI (`.github/workflows/ci.yml`, job « Qualité (qos-audit) ») exécute le même script sur les runners `maison`.
+Le job CI « Qualité (lint, tests) » applique les mêmes contrôles ; le seuil de couverture (lignes et branches)
+est lu dans `pyproject.toml`.
 
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.

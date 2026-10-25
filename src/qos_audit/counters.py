@@ -154,6 +154,7 @@ class NullCounters:
     """Aucune source : les constats de congestion restent indirects (ECN, utilisation)."""
 
     def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
+        logger.debug("queue_drops: source absente | {}/{}", exporter, ifindex)
         return {}
 
 
@@ -161,4 +162,5 @@ class ComwareCliCounters:
     """TODO: collecte SSH (netmiko/scrapli) + parsing des statistiques de files Comware, delta entre deux relevés."""
 
     def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
+        logger.debug("queue_drops: collecte SSH non implémentée | {}/{}", exporter, ifindex)
         raise NotImplementedError

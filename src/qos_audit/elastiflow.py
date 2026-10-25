@@ -61,11 +61,14 @@ def configure_counter_fields(overrides: dict[str, str]) -> None:
     Raises:
         ValueError: Si une clé logique est inconnue.
     """
+    logger.debug("configure_counter_fields: entrée | {} surcharges", len(overrides))
     unknown = set(overrides) - set(COUNTER_FIELDS)
     if unknown:
         msg = f"Clés de champ de compteurs inconnues : {sorted(unknown)}"
+        logger.debug("configure_counter_fields: sortie (clés inconnues) | {}", sorted(unknown))
         raise ValueError(msg)
     COUNTER_FIELDS.update(overrides)
+    logger.debug("configure_counter_fields: sortie | {} champs", len(COUNTER_FIELDS))
 
 
 def configure_fields(overrides: dict[str, str]) -> None:
