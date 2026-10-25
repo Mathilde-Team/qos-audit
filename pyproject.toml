@@ -10,3 +10,14 @@ qos-audit = "qos_audit.cli:main"
 
 [tool.ruff]
 line-length = 120
+
+# Couverture (SOCLE §4) : branches comprises, seuil bloquant déclaré ici et
+# nulle part ailleurs. Dépôt sous 95 % : palier 1 = mesure du 25/10/2026 (#5),
+# à relever à chaque PR de tests jusqu'à 95.
+[tool.coverage.run]
+branch = true
+source = ["src/qos_audit"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

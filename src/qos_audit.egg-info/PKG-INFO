@@ -3,9 +3,7 @@ Name: qos-audit
 Version: 0.1.0
 Summary: Qualification automatisée de la mise en oeuvre QoS (politique théorique vs mesures ElastiFlow/sFlow)
 Requires-Python: >=3.11
-License-File: LICENSE
 Requires-Dist: opensearch-py>=2.4
 Requires-Dist: pyyaml>=6
 Requires-Dist: loguru>=0.7
 Requires-Dist: jinja2>=3.1
-Dynamic: license-file

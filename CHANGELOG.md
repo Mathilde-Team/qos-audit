@@ -9,6 +9,12 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Couverture : seuil bloquant à 90 % lignes et branches dans `pyproject.toml` (palier 1, #5) ;
+  tests du client ElastiFlow (fenêtres, filtres, agrégations, pagination) et des contrôles
+  `dscp_plan`, `untrusted_ports`, `class_share`, `congestion`, `exit_balance`, `sampling_drift`,
+  `calibration`, `run_all` ; tests du point d'entrée (`sampling`, `compare`, `audit`).
+  Couverture mesurée : 91,14 %.
+
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
 

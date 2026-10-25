@@ -1,4 +1,3 @@
-LICENSE
 README.md
 pyproject.toml
 src/qos_audit/__init__.py
@@ -31,6 +30,8 @@ src/qos_audit/comware/parser.py
 tests/test_advisor.py
 tests/test_calibration.py
 tests/test_checks.py
+tests/test_cli.py
 tests/test_comware.py
+tests/test_elastiflow.py
 tests/test_policy.py
 tests/test_sampling.py
