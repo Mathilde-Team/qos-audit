@@ -9,7 +9,7 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 | Commande | Rôle |
 |---|---|
-| `qos-audit audit` | Contrôles : marquage, DSCP hors plan, frontière de confiance, partage et débordement par classe, saturation, congestion, bascule entre sorties, adéquation du sampling, santé de la calibration. Rapport JSON, code retour 0 (OK) / 1 (WARN) / 2 (CRIT). |
+| `qos-audit audit` | Contrôles : marquage, DSCP hors plan, frontière de confiance, partage et débordement par classe, saturation (sur les **compteurs d'interface 30 s** si disponibles, sinon flux — repli signalé), cohérence flux vs compteurs, congestion, bascule entre sorties, adéquation du sampling, santé de la calibration. Rapport JSON, code retour 0 (OK) / 1 (WARN) / 2 (CRIT). |
 | `qos-audit advise` | Découverte des flux non classifiés, recommandations d'après le catalogue validé, brouillon de config Comware. |
 | `qos-audit compare` | Compare deux rapports d'audit (avant/après un changement). |
 | `qos-audit sampling` | Calcule le sampling recommandé par débit de lien ou par sortie, et l'erreur attendue. |
@@ -49,6 +49,9 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 ## Qualité
 
-    ruff check --line-length 120 . && ruff format --line-length 120 --check . && pytest
+    make lint && make test
+
+Le job CI « Qualité (lint, tests) » applique les mêmes contrôles ; le seuil de couverture (lignes et branches)
+est lu dans `pyproject.toml`.
 
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.

@@ -19,6 +19,21 @@ Modèle : `calibrations/calibration.example.yaml`. Code : `src/qos_audit/calibra
 | P9 | Contrat opérateur | `policy.yaml` (classes, budgets) | `dscp_confirmed`, `max_share_pct` |
 | Signature | Verdict de la section 10 | `validated_on`, `reference` | `calibration` signale une calibration jamais validée ou vieille de plus de `calibration_max_age_days` |
 
+## Compteurs d'interface
+
+L'utilisation des sorties est calculée sur les counter samples sFlow (compteurs d'interface cumulés, toutes les
+30 s : mesure exacte, sans l'incertitude des flux échantillonnés). Deux clés de calibration les concernent, à
+relever sur un enregistrement de télémétrie de la version déployée :
+
+| Clé | Effet dans l'outil |
+|---|---|
+| `elastiflow.counters_index` | Pattern d'index des counter samples (défaut : `elastiflow-telemetry_flow-*`, nom ElastiFlow ≥ 6.2) |
+| `elastiflow.counter_fields` | Surcharge de `elastiflow.COUNTER_FIELDS` (`exporter`, `ifindex`, `bytes_in`, `bytes_out` ; défauts `netif.*`) |
+
+Sans compteurs exploitables (index absent, champs différents, couverture insuffisante), l'audit replie sur les
+flux et le signale (`utilization_source` à `flows` dans les constats). Le contrôle `counter_consistency` confronte
+les deux sources et alerte au-delà de `counter_consistency_max_dev_pct`.
+
 ## Risque principal
 
 Si `sampling_already_applied` est inconnu (`null`), l'outil suppose que le facteur n'est **pas** appliqué. Si

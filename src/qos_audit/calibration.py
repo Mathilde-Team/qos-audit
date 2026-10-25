@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
-from qos_audit.elastiflow import configure_fields
+from qos_audit.elastiflow import configure_counter_fields, configure_fields
 
 __all__ = ["Calibration", "ExporterCal", "InterfaceCfg", "apply_calibration", "default_calibration", "load_calibration"]
 
@@ -40,6 +40,8 @@ class Calibration:
     """Paramètres établis par la phase 0 de validation."""
 
     fields: dict[str, str] = field(default_factory=dict)
+    counters_index: str | None = None
+    counter_fields: dict[str, str] = field(default_factory=dict)
     sampling_already_applied: bool | None = None
     bytes_overhead_per_packet: int = 0
     ingest_lag_minutes: int = 0
@@ -92,6 +94,8 @@ def load_calibration(path: Path) -> Calibration:
     }
     return Calibration(
         fields=ef.get("fields", {}),
+        counters_index=ef.get("counters_index"),
+        counter_fields=dict(ef.get("counter_fields", {})),
         sampling_already_applied=ef.get("sampling_already_applied"),
         bytes_overhead_per_packet=int(ef.get("bytes_overhead_per_packet", 0)),
         ingest_lag_minutes=int(ef.get("ingest_lag_minutes", 0)),
@@ -106,3 +110,6 @@ def apply_calibration(cal: Calibration) -> None:
     if cal.fields:
         configure_fields(cal.fields)
         logger.info("Champs ElastiFlow surchargés : {}", sorted(cal.fields))
+    if cal.counter_fields:
+        configure_counter_fields(cal.counter_fields)
+        logger.info("Champs de compteurs surchargés : {}", sorted(cal.counter_fields))

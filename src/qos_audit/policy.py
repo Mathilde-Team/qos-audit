@@ -30,6 +30,8 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "sampling_margin": 1.0,
     "sampling_max_samples_per_s": 3200,
     "calibration_max_age_days": 180,
+    "counter_min_coverage_pct": 50,  # en dessous : repli sur les flux (compteurs trop lacunaires)
+    "counter_consistency_max_dev_pct": 20,  # écart flux extrapolés vs compteurs au-delà duquel on s'alerte
 }
 
 _RULE = re.compile(
