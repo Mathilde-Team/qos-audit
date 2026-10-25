@@ -46,9 +46,12 @@ class SflowDevice:
 
 def _int(value: str) -> int | None:
     try:
-        return int(value)
+        n = int(value)
     except ValueError:
+        logger.debug("_int: {} non numérique", value)
         return None
+    logger.debug("_int: retour | {}", n)
+    return n
 
 
 def parse_sflow(text: str, exporter: str | None = None, source: str = "") -> SflowDevice:
@@ -119,24 +122,28 @@ def _parse_interface(name: str, body: list[str]) -> SflowInterface:
     )
 
 
-def to_calibration_section(devices: list[SflowDevice]) -> dict:
+def to_calibration_section(devices: list[SflowDevice], ifindex_map: dict[tuple[str, str], int] | None = None) -> dict:
     """Section « contexte sFlow » prête à coller dans ``calibration.yaml`` (issue #19).
 
     Les ``ifindex`` viennent du CSV ``exporter,ifindex,name`` (SNMP ifName ou ElastiFlow) :
-    sans correspondance, l'interface est listée avec son nom seul — à compléter à la main.
+    une interface sans correspondance est omise (``load_calibration`` exige un ifindex) et
+    signalée dans les constats plutôt que dans la section.
     """
     logger.debug("to_calibration_section: entrée | {} équipement(s)", len(devices))
     exporters: dict[str, dict] = {}
     for dev in devices:
         intervals = [i.counter_interval_s for i in dev.interfaces.values() if i.counter_interval_s]
+        mapped = [
+            {"ifindex": ifindex, "name": i.name, "sampling_rate": i.sampling_rate}
+            for i in sorted(dev.interfaces.values(), key=lambda x: x.name)
+            for ifindex in [((ifindex_map or {}).get((dev.exporter, i.name)))]
+            if ifindex is not None
+        ]
         exporters[dev.exporter] = {
             "name": dev.exporter,
             "sampling_direction": "inbound",  # Comware échantillonne en entrée ; « both » se déclare à la main
             "counter_interval_s": min(intervals) if intervals else 300,
-            "interfaces": [
-                {"ifindex": None, "name": i.name, "sampling_rate": i.sampling_rate}
-                for i in sorted(dev.interfaces.values(), key=lambda x: x.name)
-            ],
+            "interfaces": mapped,
         }
     logger.debug("to_calibration_section: retour | {} exporteur(s)", len(exporters))
     return {"exporters": exporters}
@@ -162,6 +169,7 @@ def sflow_findings(
     out: list[Finding] = []
 
     def add(sev: Severity, subject: str, msg: str) -> None:
+        logger.debug("constat sflow_config | {} {}", subject, msg)
         out.append(Finding("sflow_config", sev, subject, msg))
 
     for s in p.sites:
@@ -183,10 +191,13 @@ def sflow_findings(
     for dev in devices:
         rates = sorted({i.sampling_rate for i in dev.interfaces.values() if i.sampling_rate})
         if len(rates) > 1:
+            # sans relation de chaîne démontrée (quel port alimente quelle sortie),
+            # des taux différents peuvent être légitimes : constat d'incertitude.
             add(
-                Severity.WARN,
+                Severity.INCONCLUSIVE,
                 dev.exporter,
-                f"taux d'échantillonnage différents sur une même chaîne : {rates}",
+                f"taux d'échantillonnage différents sur l'équipement : {rates} ; "
+                "légitime seulement si chaque chaîne suit la capacité de sa sortie (CONFIGURATION_INTERFACES.md §3)",
             )
         for itf in dev.interfaces.values():
             if itf.sampling_rate is not None and itf.counter_collector is None:
@@ -203,12 +214,18 @@ def sflow_findings(
 
 def render_calibration_yaml(section: dict) -> str:
     """Section calibration rendue en YAML."""
-    return yaml.safe_dump(section, allow_unicode=True, sort_keys=False)
+    logger.debug("render_calibration_yaml: entrée")
+    texte = yaml.safe_dump(section, allow_unicode=True, sort_keys=False)
+    logger.debug("render_calibration_yaml: retour | {} caractère(s)", len(texte))
+    return texte
 
 
 def load_configs(paths: list[Path], exporter: str | None = None) -> list[SflowDevice]:
     """Analyse des fichiers de configuration (dossiers parcourus : ``*.cfg``, ``*.txt``)."""
+    logger.debug("load_configs: entrée | {} chemin(s)", len(paths))
     files: list[Path] = []
     for path in paths:
         files += sorted([*path.glob("*.cfg"), *path.glob("*.txt")]) if path.is_dir() else [path]
-    return [parse_sflow(f.read_text(encoding="utf-8", errors="replace"), exporter, f.name) for f in files]
+    devices = [parse_sflow(f.read_text(encoding="utf-8", errors="replace"), exporter, f.name) for f in files]
+    logger.debug("load_configs: retour | {} équipement(s)", len(devices))
+    return devices

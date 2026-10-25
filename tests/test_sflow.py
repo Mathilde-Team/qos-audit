@@ -38,17 +38,39 @@ def test_parse_sflow_lit_agent_collecteurs_et_interfaces() -> None:
     assert "GigabitEthernet1/0/49" not in dev.interfaces
 
 
-def test_to_calibration_section() -> None:
+def test_to_calibration_section_sans_csv() -> None:
     dev = parse_sflow(FIXTURE.read_text(encoding="utf-8"), source=FIXTURE.name)
     section = to_calibration_section([dev])
     exp = section["exporters"]["rtr-a-01"]
     assert exp["sampling_direction"] == "inbound"
     assert exp["counter_interval_s"] == 30  # minimum des interfaces
-    names = {i["name"]: i["sampling_rate"] for i in exp["interfaces"]}
-    assert names["Ten-GigabitEthernet1/0/1"] == 512
-    assert names["GigabitEthernet1/0/10"] == 128
-    yaml_text = render_calibration_yaml(section)
-    assert "sampling_rate: 512" in yaml_text
+    # sans CSV, les interfaces ne sont pas éditables telles quelles (ifindex requis)
+    assert exp["interfaces"] == []
+
+
+def test_to_calibration_section_avec_csv_puis_calibration_complete() -> None:
+    dev = parse_sflow(FIXTURE.read_text(encoding="utf-8"), source=FIXTURE.name)
+    ifmap = load_ifindex_map(ROOT / "tests" / "fixtures" / "ifindex.csv")
+    section = to_calibration_section([dev], ifmap)
+    exp = section["exporters"]["rtr-a-01"]
+    by_ifindex = {i["ifindex"]: i["sampling_rate"] for i in exp["interfaces"]}
+    assert by_ifindex == {10: 128}  # le Ten-Gig 1/0/1 n'est pas dans le CSV
+    # parcours complet : YAML -> load_calibration -> configured_rate (ce que lit sampling_drift)
+
+    cal = load_calibration_from_section(section)
+    assert cal.configured_rate("rtr-a-01", 10) == 128
+
+
+def load_calibration_from_section(section: dict) -> object:
+    """Écrit la section en YAML et la relit via load_calibration (parcours réel)."""
+    import tempfile
+
+    from qos_audit.calibration import load_calibration
+
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+        fh.write(render_calibration_yaml(section))
+        name = fh.name
+    return load_calibration(Path(name))
 
 
 def test_sflow_findings_sorties_et_taux() -> None:
@@ -60,7 +82,9 @@ def test_sflow_findings_sorties_et_taux() -> None:
     assert any("non échantillonnée" in s for s in subjects)  # wan1 (ifindex 49)
     assert any("taux d'échantillonnage différents" in s for s in subjects)  # 512 vs 128
     assert any("300 s" in s for s in subjects)  # interval de compteurs
-    assert all(f.check == "sflow_config" and f.severity == Severity.WARN for f in findings)
+    assert all(f.check == "sflow_config" for f in findings)
+    # le constat « taux différents » est d'incertitude, pas de défaut certain
+    assert any(f.severity == Severity.INCONCLUSIVE for f in findings)
 
 
 def test_sflow_findings_equipement_absent() -> None:

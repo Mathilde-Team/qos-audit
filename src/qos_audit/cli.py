@@ -135,7 +135,8 @@ def _sflow(a: argparse.Namespace) -> int:
     """Extrait le contexte sFlow des configurations vers calibration.yaml et liste les constats (#19)."""
     logger.debug("_sflow: entrée | configs={}", a.cfg)
     devices = load_configs(a.cfg, a.exporter)
-    section = to_calibration_section(devices)
+    ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
+    section = to_calibration_section(devices, ifmap)
     yaml_text = render_calibration_yaml(section)
     if a.out:
         a.out.write_text(yaml_text, encoding="utf-8")
