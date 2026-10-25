@@ -62,6 +62,7 @@ Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
 | `acl_not_found`, `classifier_not_found`, `behavior_not_found` | ERROR | Référence à un objet non défini : la règle de marquage est incomplète |
 | `acl_deny_ignored` | WARN | Une règle `deny` exclut des flux de la classification ; l'exclusion n'est pas modélisée (match plus large que la réalité) |
 | `acl_rule_skipped` | WARN | Règle `permit` écartée : critère restrictif non modélisé (`dscp`, `tos`, `fragment`, drapeaux TCP, `icmp-type`…) |
+| `acl_port_range_wide` | WARN | Plage de plus de 1024 ports sans IP source ni destination (plage RTP) : attrape aussi les ports éphémères des clients ; restreindre aux IP des serveurs (IPBX, passerelles) |
 | `wildcard_non_contiguous` | WARN | Wildcard non convertible en CIDR : règle écartée |
 | `object_group_unresolved` / `…_entry_unsupported` | WARN | Groupe inconnu ou forme non gérée : règle écartée |
 | `classifier_criterion_unsupported` | WARN | `if-match` autre qu'ACL/any (dscp, vlan, dot1p…) non modélisé |

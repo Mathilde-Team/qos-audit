@@ -13,7 +13,7 @@ from qos_audit.comware.convert import acl_to_matches, dscp_name
 from qos_audit.comware.ifname import normalize_ifname
 from qos_audit.comware.model import DeviceQos, Issue
 from qos_audit.comware.parser import parse_device
-from qos_audit.models import FlowMatch, Policy
+from qos_audit.models import FlowMatch, Policy, wide_port_range
 
 __all__ = ["MarkingRule", "build_policy", "load_devices", "load_ifindex_map", "marking_rules", "render_report"]
 
@@ -106,6 +106,24 @@ def _applications(dev: DeviceQos, policy: str) -> list[str]:
     return apps
 
 
+def _flag_wide_ranges(dev: DeviceQos, subject: str, matches: list[FlowMatch]) -> None:
+    """Constat ``acl_port_range_wide`` pour chaque plage trop large sans restriction d'IP (#32)."""
+    logger.debug("_flag_wide_ranges: entrée | {} ({} match)", subject, len(matches))
+    for m in matches:
+        plage = wide_port_range(m)
+        if plage is not None:
+            dev.issues.append(
+                Issue(
+                    "WARN",
+                    "acl_port_range_wide",
+                    subject,
+                    f"{m.protocol or 'ip'} ports {plage[0]}-{plage[1]} ({plage[1] - plage[0] + 1} ports) sans IP : "
+                    "attrape aussi des ports éphémères, restreindre aux IP des serveurs (IPBX, passerelles)",
+                )
+            )
+    logger.debug("_flag_wide_ranges: sortie | {} constat(s)", len(dev.issues))
+
+
 def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], bool]:
     """Critères d'un classifier : (FlowMatch, catch_all)."""
     if name == "default-class":
@@ -132,7 +150,9 @@ def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], boo
         if acl is None:
             dev.issues.append(Issue("ERROR", "acl_not_found", name, f"ACL {key} référencée mais non définie"))
             continue
-        matches += acl_to_matches(dev, acl)
+        converted = acl_to_matches(dev, acl)
+        _flag_wide_ranges(dev, acl.label, converted)
+        matches += converted
     return matches, catch_all and not matches
 
 

@@ -65,3 +65,6 @@ thresholds:
   sampling_error_crit_pct: 15  # au-delà : sampling inadapté (CRIT)
   sampling_max_samples_per_s: 3200   # pire cas (paquets de 100 o) : au-delà, risque CPU / export
   calibration_max_age_days: 180
+  port_range_max_ports: 1024   # plage sans IP au-delà : trop large (ports éphémères)
+  voice_max_packet_bytes: 300  # paquet voix (G.711 20 ms = 200 o IP) ; au-delà, pas de la voix
+  port_range_non_voice_max_pct: 10  # part tolérée d'octets non voix dans une classe voix par plage

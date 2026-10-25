@@ -10,7 +10,7 @@ from loguru import logger
 from qos_audit.comware.convert import acl_to_matches
 from qos_audit.comware.model import Acl, DeviceQos
 from qos_audit.comware.parser import parse_rule
-from qos_audit.models import Exit, FlowMatch, Policy, QosClass, Site
+from qos_audit.models import WIDE_PORT_RANGE, Exit, FlowMatch, Policy, QosClass, Site
 
 __all__ = ["DEFAULT_THRESHOLDS", "load_policy", "parse_comware_acl", "parse_ports"]
 
@@ -34,6 +34,9 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "calibration_max_age_days": 180,
     "counter_min_coverage_pct": 50,  # en dessous : repli sur les flux (compteurs trop lacunaires)
     "counter_consistency_max_dev_pct": 20,  # écart flux extrapolés vs compteurs au-delà duquel on s'alerte
+    "port_range_max_ports": WIDE_PORT_RANGE,  # plage sans IP au-delà : trop large (#32)
+    "voice_max_packet_bytes": 300,  # paquet voix : G.711 20 ms = 200 o IP ; au-delà, pas de la voix
+    "port_range_non_voice_max_pct": 10,  # part tolérée d'octets non voix dans une classe voix par plage
 }
 
 

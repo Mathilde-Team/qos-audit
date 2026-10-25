@@ -9,6 +9,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- ACL par plages de ports trop larges (#32) : constat d'extraction `acl_port_range_wide` (plage de plus de
+  1024 ports sans IP) ; contrôle `port_range` : pour une classe voix, part de ses octets en paquets non voix
+  par sortie et IP candidates (IPBX, passerelles) à qui restreindre la classe ; seuils `port_range_max_ports`,
+  `voice_max_packet_bytes`, `port_range_non_voice_max_pct`. Palier de couverture relevé de 82 à 83 % (mesure
+  83,43 %).
 - Calibration multi-sites : bloc `validation` par exporteur dans `calibration.yaml` (date, modèle, firmware,
   version d'ElastiFlow, sens, interface et sampling-rates validés, protocole §10.4) ; le contrôle `calibration`
   signale un exporteur non couvert, une mise à jour du firmware ou d'ElastiFlow depuis la validation, un
