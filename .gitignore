@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.coverage
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+# Sorties des commandes (audit, advise, extract)
+qos_extract/

@@ -11,6 +11,8 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
+- Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
+  (`uv.lock`, groupe `dev` avec ruff figé), couverture des branches et palier bloquant à 76 % (#1, #5).
 
 ### Session 04 (2026-10-25)
 
