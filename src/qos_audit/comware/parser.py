@@ -5,6 +5,8 @@ from __future__ import annotations
 import ipaddress
 import re
 
+from loguru import logger
+
 from qos_audit.comware.convert import dscp_value
 from qos_audit.comware.model import (
     Acl,
@@ -218,7 +220,8 @@ def _parse_group(dev: DeviceQos, name: str, body: list[str]) -> None:
                 cidrs += [str(n) for n in ipaddress.summarize_address_range(first, last)]
             else:
                 dev.issues.append(Issue("WARN", "object_group_entry_unsupported", name, line))
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as exc:
+            logger.debug("Entrée de groupe invalide ({}) : {} : {}", name, line.strip(), exc)
             dev.issues.append(Issue("WARN", "object_group_entry_invalid", name, line))
     dev.groups[name] = cidrs
 

@@ -11,6 +11,8 @@ from loguru import logger
 from qos_audit.comware.model import Acl, AclRule, DeviceQos, Issue
 from qos_audit.models import FlowMatch
 
+from loguru import logger
+
 __all__ = ["DSCP_BY_NAME", "acl_to_matches", "dscp_name", "dscp_value", "ports_to_ranges", "wildcard_to_cidr"]
 
 DSCP_BY_NAME = {
@@ -145,7 +147,7 @@ def acl_to_matches(dev: DeviceQos, acl: Acl) -> list[FlowMatch]:
     effet sur un ``permit`` déjà atteint). Un ``deny`` non modélisable reste signalé :
     sans son exclusion, le match est plus large que la réalité.
     """
-    logger.debug("acl_to_matches: entrée | {} ({} règle(s))", acl.label, len(acl.rules))
+    logger.debug("acl_to_matches: entrée | {} règle(s)", len(acl.rules))
     out: list[FlowMatch] = []
     pending_denies: list[FlowMatch] = []
     for rule in acl.rules:

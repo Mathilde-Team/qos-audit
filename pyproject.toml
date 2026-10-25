@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "qos-audit"
 version = "0.1.0"
@@ -8,5 +12,29 @@ dependencies = ["opensearch-py>=2.4", "pyyaml>=6", "loguru>=0.7", "jinja2>=3.1"]
 [project.scripts]
 qos-audit = "qos_audit.cli:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    # Version figée (SOCLE §4) : ne monte que volontairement.
+    "ruff==0.17.2",
+]
+
 [tool.ruff]
 line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+# Couverture des branches obligatoire (SOCLE.md §4).
+branch = true
+source = ["src/qos_audit"]
+
+[tool.coverage.report]
+# Seuil bloquant de l'équipe : 95 % (Mathilde-Team/.github#9). Palier du dépôt :
+# mesure du 25/10/2026 (76,55 %, entier inférieur), relevé à chaque PR de tests jusqu'à 95 (suivi : #5).
+fail_under = 76
+show_missing = true
+skip_covered = false

@@ -8,6 +8,8 @@ from qos_audit.advisor.catalog import App
 from qos_audit.advisor.discover import FlowCluster
 from qos_audit.models import Policy
 
+from loguru import logger
+
 __all__ = ["Recommendation", "recommend"]
 
 
@@ -56,6 +58,7 @@ def recommend(
     Returns:
         Recommandations triées par impact décroissant.
     """
+    logger.debug("recommend: entrée | {} groupe(s), {} application(s)", len(clusters), len(apps))
     by_class = {c.name: c for c in p.classes}
     recos: list[Recommendation] = []
     for cl in clusters:
