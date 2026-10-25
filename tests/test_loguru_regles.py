@@ -38,29 +38,6 @@ def _is_loguru_call(node: ast.AST) -> bool:
     )
 
 
-def _est_triviale(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """Fonction triviale au sens du SOCLE §8.1 : bouchon, propriété, ≤ 5 lignes."""
-    for dec in fn.decorator_list:
-        name = dec.attr if isinstance(dec, ast.Attribute) else getattr(dec, "id", None)
-        if name == "property":
-            return True
-    body = list(fn.body)
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        body = body[1:]
-    if all(
-        isinstance(s, ast.Pass)
-        or (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and s.value.value is Ellipsis)
-        for s in body
-    ):
-        return True  # bouchon (protocole, méthode à implémenter)
-    return (fn.end_lineno or fn.lineno) - fn.lineno + 1 <= 5
-
-
 def test_chaque_except_contient_un_appel_loguru():
     fautifs = []
     for path in _modules():
@@ -88,17 +65,14 @@ def test_aucun_import_logging():
 def test_chaque_module_avec_fonctions_a_un_logger():
     """Le logger doit être défini au niveau du module (pas seulement dans une fonction).
 
-    Exemption (SOCLE §8.1) : un module dont les seules fonctions sont triviales
-    (accesseurs, propriétés, bouchons de protocole) n'a pas de trace à émettre,
-    donc pas de logger.
+    S'applique à tout module qui définit une fonction (SOCLE §8.3), y compris
+    les modules d'accesseurs : l'exemption de §8.1 ne porte que sur les traces,
+    pas sur l'obligation de logger.
     """
     fautifs = []
     for path in _modules():
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        fns = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        if not fns:
-            continue
-        if all(_est_triviale(fn) for fn in fns):
+        if not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in ast.walk(tree)):
             continue
         defini = False
         noms = {"logger", "_logger"}
