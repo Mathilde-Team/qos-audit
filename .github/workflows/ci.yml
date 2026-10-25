@@ -1,0 +1,52 @@
+# CI du socle Mathilde-Team (SOCLE §4). Le job « Qualité (lint, tests) » est
+# un check requis sur main et dev (.github/branch-protection/*.json, issue #3) :
+# garder son nom. Version minimale de Python (requires-python >= 3.11) pour
+# tester la borne basse. Le seuil de couverture n'est pas encore déclaré dans
+# pyproject.toml : il arrive avec l'issue #5 ([tool.coverage.report]
+# fail_under) et cette commande le lira sans modification.
+name: CI
+
+"on":
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Qualité (lint, tests)
+    runs-on: ${{ fromJSON(vars.RUNS_ON_LINUX || '{"group":"maison","labels":["self-hosted","linux"]}') }}
+    # Leçon AsyncRdp4#59 / SwitchCapture#98 : tout job borné dans le temps.
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v7
+
+      - name: Installation de uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Installation de Python
+        run: uv python install 3.11
+
+      # ruff figé à la version du .pre-commit-config.yaml du dépôt (v0.6.9) ;
+      # la ligne de 120 caractères est celle de [tool.ruff] du pyproject.toml.
+      - name: Lint et format (ruff)
+        run: |
+          uvx ruff@0.6.9 check --line-length 120 .
+          uvx ruff@0.6.9 format --check --line-length 120 .
+
+      # Le paquet est installé en éditable : disposition src/ sans build-system
+      # déclaré, les dépendances de test (pytest, pytest-cov) restent éphémères,
+      # versions figées (SOCLE §4 : les versions ne montent que volontairement).
+      # Couverture des branches incluse (SOCLE §4) ; le seuil bloquant sera lu
+      # dans pyproject.toml dès que l'issue #5 l'y déclarera.
+      - name: Tests et couverture
+        run: >
+          uv run --no-project --python 3.11
+          --with pytest==9.1.1 --with pytest-cov==7.1.0 --with-editable .
+          pytest --cov=src/qos_audit --cov-branch --cov-report=term-missing
