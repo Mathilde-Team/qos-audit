@@ -9,6 +9,8 @@ import yaml
 
 from qos_audit.policy import parse_ports
 
+from loguru import logger
+
 __all__ = ["App", "load_catalog"]
 
 
@@ -34,8 +36,9 @@ def load_catalog(path: Path) -> list[App]:
     Returns:
         Liste d'applications.
     """
+    logger.debug("load_catalog: entrée | {}", path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return [
+    apps = [
         App(
             name=a["name"],
             target_class=a["target_class"],
@@ -47,3 +50,5 @@ def load_catalog(path: Path) -> list[App]:
         )
         for a in raw["applications"]
     ]
+    logger.debug("load_catalog: retour | {} application(s)", len(apps))
+    return apps

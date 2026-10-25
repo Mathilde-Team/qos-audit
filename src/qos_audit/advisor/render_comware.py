@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from qos_audit.advisor.recommend import Recommendation
 
+from loguru import logger
+
 __all__ = ["DSCP_KEYWORDS", "render_marking_policy"]
 
 DSCP_KEYWORDS = {0: "default", 8: "cs1", 10: "af11", 18: "af21", 24: "cs3", 26: "af31", 34: "af41", 46: "ef", 48: "cs6"}
@@ -22,6 +24,7 @@ def render_marking_policy(recos: list[Recommendation], policy_name: str = "QOS-M
     Returns:
         Texte de configuration (brouillon).
     """
+    logger.debug("render_marking_policy: entrée | {} recommandation(s)", len(recos))
     lines = ["# BROUILLON - à valider, à tester sur un site pilote, avec retour arrière prévu", ""]
     seen: set[tuple[str, int]] = set()
     entries: list[str] = []

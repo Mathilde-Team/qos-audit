@@ -8,6 +8,8 @@ import itertools
 from qos_audit.comware.model import Acl, AclRule, DeviceQos, Issue
 from qos_audit.models import FlowMatch
 
+from loguru import logger
+
 __all__ = ["DSCP_BY_NAME", "acl_to_matches", "dscp_name", "dscp_value", "ports_to_ranges", "wildcard_to_cidr"]
 
 DSCP_BY_NAME = {
@@ -107,6 +109,7 @@ def acl_to_matches(dev: DeviceQos, acl: Acl) -> list[FlowMatch]:
 
     Les règles ``deny`` (exclusions) et les critères non modélisés (dscp, tos, fragment, flags TCP…) sont signalés.
     """
+    logger.debug("acl_to_matches: entrée | {} règle(s)", len(acl.rules))
     out: list[FlowMatch] = []
     for rule in acl.rules:
         if rule.action != "permit":
