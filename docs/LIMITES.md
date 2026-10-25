@@ -31,6 +31,8 @@ Les petits flux et les voix courtes sont mal représentés avec un taux de 1/100
 - **Tunnels et chiffrement** : après IPsec, GRE ou SD-WAN, seuls l'en-tête externe et son DSCP sont visibles. Les ACL par ports ne s'appliquent plus.
 - **Asymétrie et multi-sorties** : l'aller et le retour peuvent emprunter des sorties différentes ; raisonner par site et par sens.
 - **ACL par plages de ports** : une plage RTP attrape aussi des ports éphémères. Préférer IP serveur + ports.
+  L'extraction le signale (`acl_port_range_wide`) et le contrôle `port_range` mesure, pour la voix, la part
+  d'octets en gros paquets et liste les IP candidates (IPBX, passerelles).
 - **Schéma ElastiFlow** : `FIELDS` à valider ; l'application du taux d'échantillonnage (`scale_by_sampling`) dépend de la version.
 
 ## Ajouts de la session 03

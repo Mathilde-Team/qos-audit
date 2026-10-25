@@ -15,7 +15,18 @@ from loguru import logger
 from qos_audit.calibration import Calibration, ExporterCal, Validation
 from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
-from qos_audit.models import Direction, Exit, Finding, FlowMatch, Policy, Severity, Site, rel_error_pct
+from qos_audit.models import (
+    Direction,
+    Exit,
+    Finding,
+    FlowMatch,
+    Policy,
+    QosClass,
+    Severity,
+    Site,
+    rel_error_pct,
+    wide_port_range,
+)
 from qos_audit.sampling import (
     expected_error_pct,
     params_from_thresholds,
@@ -218,6 +229,109 @@ def check_dscp_plan(c: ElastiflowClient, p: Policy, w: Window, only_site: str | 
                     evidence={"unknown": unknown},
                 )
             )
+    return out
+
+
+_VOICE_DSCP = 46
+
+
+def _size_filter(op: str, max_bytes: float) -> dict:
+    """Filtre sur la taille moyenne des paquets d'un enregistrement (octets / paquets).
+
+    Un enregistrement sFlow porte un paquet échantillonné : sa taille moyenne est celle du paquet.
+    """
+    logger.debug("_size_filter: entrée | {} {}", op, max_bytes)
+    expr = f"doc['{FIELDS['bytes']}'].value {op} params.t * doc['{FIELDS['packets']}'].value"
+    clause = {"script": {"script": {"source": expr, "params": {"t": max_bytes}}}}
+    logger.debug("_size_filter: sortie | {}", expr)
+    return clause
+
+
+def _voice_range_finding(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    target: tuple[Site, Exit, QosClass],
+    m: FlowMatch,
+    plage: tuple[int, int],
+) -> Finding:
+    """Part non voix du trafic d'une classe voix matché par une plage large, sur une sortie (#32)."""
+    logger.debug("_voice_range_finding: entrée | {} {}", m, plage)
+    site, ex, cls = target
+    th = p.thresholds
+    span = f"{m.protocol or 'ip'} {plage[0]}-{plage[1]}"
+    subject = f"{site.name}/{ex.name}/{cls.name}"
+    base = _and(
+        exit_filter(ex.exporter, ex.ifindex, Direction.EGRESS.value),
+        match_filter(m),
+        {"terms": {FIELDS["dscp"]: sorted(cls.dscp)}},
+    )
+    rows = c.bytes_by(w, ["dscp"], base)
+    samples = sum(r["samples"] for r in rows)
+    if not _enough(samples, p):
+        logger.debug("_voice_range_finding: sortie | {} échantillons, non concluant", samples)
+        return _finding(
+            p, "port_range", Severity.INCONCLUSIVE, subject, f"plage {span} : {samples} échantillons, insuffisant",
+            site=site, direction="egress", samples=samples,
+        )  # fmt: skip
+    limit = th["voice_max_packet_bytes"]
+    total = sum(r["bytes"] for r in rows)
+    big = sum(r["bytes"] for r in c.bytes_by(w, ["dscp"], _and(base, _size_filter(">", limit))))
+    pct = 100 * big / total if total else 0.0
+    ip_key = "dst_ip" if m.dst_ports == plage else "src_ip"
+    voice = c.bytes_by(w, [ip_key], _and(base, _size_filter("<=", limit)))
+    top = [str(r[ip_key]) for r in sorted(voice, key=lambda r: -r["bytes"]) if r.get(ip_key)][:5]
+    reco = f"restreindre la classe aux IP des IPBX / passerelles ({', '.join(top) or 'aucune IP voix vue'})"
+    sev = Severity.WARN if pct > th["port_range_non_voice_max_pct"] else Severity.OK
+    msg = (
+        f"plage {span} sans IP : {pct:.1f} % des octets {cls.name} en paquets > {limit:.0f} o (pas de la voix) ; {reco}"
+    )
+    finding = _finding(
+        p, "port_range", sev, subject, msg, site=site, direction="egress", samples=samples,
+        evidence={"match": str(m), "non_voice_pct": pct, "voice_ips": top, "ip_field": ip_key},
+    )  # fmt: skip
+    logger.debug("_voice_range_finding: sortie | {:.1f} % non voix", pct)
+    return finding
+
+
+def check_port_ranges(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """ACL par plages de ports trop larges, sans restriction d'IP (#32).
+
+    Une plage RTP attrape aussi des ports éphémères. Pour une classe voix (DSCP 46), on mesure par sortie
+    la part de ses octets, matchés par la plage, portée par des paquets plus grands qu'un paquet voix, et
+    l'on propose les IP vues dans le trafic voix (IPBX, passerelles) pour restreindre la classe. Pour une
+    autre classe, la plage est signalée sans mesure.
+
+    Args:
+        c: Client ElastiFlow.
+        p: Politique théorique.
+        w: Fenêtre d'analyse.
+        only_site: Restreint aux sorties d'un site.
+
+    Returns:
+        Constats ``port_range`` (aucun si aucune plage large).
+    """
+    logger.debug("check_port_ranges: entrée | {} classe(s)", len(p.classes))
+    max_ports = int(p.thresholds["port_range_max_ports"])
+    out: list[Finding] = []
+    for cls in p.classes:
+        for m in cls.match:
+            plage = wide_port_range(m, max_ports)
+            if plage is None:
+                continue
+            if _VOICE_DSCP in cls.dscp:
+                out += [_voice_range_finding(c, p, w, (s, ex, cls), m, plage) for s, ex in _exits(p, only_site)]
+                continue
+            n = plage[1] - plage[0] + 1
+            out.append(
+                _finding(
+                    p, "port_range", Severity.WARN, cls.name,
+                    f"plage {m.protocol or 'ip'} {plage[0]}-{plage[1]} ({n} ports) sans IP : attrape aussi des "
+                    "ports éphémères, restreindre aux IP des serveurs",
+                    evidence={"match": str(m)},
+                )
+            )  # fmt: skip
+    logger.debug("check_port_ranges: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -881,6 +995,7 @@ def run_all(
     findings += check_dscp_plan(c, p, w, only_site)
     findings += check_untrusted_ports(c, p, w)
     findings += check_class_share(c, p, w, only_site)
+    findings += check_port_ranges(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
     findings += check_congestion(c, p, w, counters, only_site)
