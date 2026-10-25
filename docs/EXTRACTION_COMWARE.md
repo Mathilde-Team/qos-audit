@@ -17,7 +17,7 @@ Code : `src/qos_audit/comware/` (`parser`, `convert`, `extract`, `model`). Tests
 |---|---|
 | `--cfg` | Fichiers `display current-configuration`, ou dossiers (`*.cfg`, `*.txt`) : un équipement par fichier |
 | `--base-policy` | Politique du plan opérateur (classes, priorités, budgets, sites, seuils) : conservée, seul `match` est remplacé |
-| `--ifindex-map` | CSV `exporter,ifindex,name` pour convertir les noms d'interface en ifIndex |
+| `--ifindex-map` | CSV `exporter,ifindex,name` pour convertir les noms d'interface en ifIndex (forme courte ou longue, normalisées) |
 | `--exporter` | Nom d'exporteur ElastiFlow imposé (un seul fichier) ; par défaut le `sysname` |
 
 Sorties dans `--out` :
@@ -84,9 +84,12 @@ Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
 - **Non extraits** : `qos trust` et `qos map-table` (interprétation du DSCP), `car` et `queue` (budgets, files), `remark dot1p`,
   profils sFlow par interface (candidat session 05 : alimenter `calibration.yaml`), applications `global` et `vlan-policy` dans
   la détection des ports non fiables.
-- **Noms d'interface** : le CSV doit utiliser les noms tels qu'écrits dans la configuration (forme longue). Sur Comware,
-  `ifName` SNMP donne souvent la forme courte (`GE1/0/10`), à vérifier ; `ifDescr` est plus proche de la configuration.
-  Aucune normalisation `GE`/`GigabitEthernet` n'est faite.
+- **Noms d'interface** : le CSV peut utiliser la forme courte (`ifName` SNMP : `GE1/0/10`, `XGE1/0/49`, `BAGG1`, `Vlan10`)
+  ou la forme longue de la configuration (`ifDescr` : `GigabitEthernet1/0/10`). Les deux côtés sont normalisés vers la forme
+  longue avant comparaison (casse et espace ignorés) : `Eth`, `GE`, `MGE`, `XGE`, `WGE`, `FGE`, `HGE`, `BAGG`, `RAGG`,
+  `Vlan`/`Vlan-int`, `Loop`, `InLoop`, `Tun`, `Ser`, `Dia`, `MTunnel`. Un type inconnu est comparé tel quel. Un nom qui, une
+  fois normalisé, porte deux ifIndex différents sur le même exporteur fait échouer le chargement du CSV. Le nom écrit dans
+  `policy.yaml` (`ifname`) reste celui de la configuration.
 - **La configuration n'est pas la réalité** : un marquage configuré peut ne pas s'appliquer (policy sur la mauvaise interface,
   ASIC sans ressources). C'est précisément ce que contrôle `marking` ensuite.
 

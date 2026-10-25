@@ -9,6 +9,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Extraction : noms d'interface Comware normalisés (`GE1/0/10` = `GigabitEthernet1/0/10`, `XGE`, `BAGG`, `Vlan`…)
+  dans `--ifindex-map` et la détection des ports non fiables ; un nom à deux ifIndex est refusé. Palier de
+  couverture relevé de 76 à 77 % (#24).
 - Journalisation (SOCLE §8) : scripts d'audit AST `audit_debug_sorties.py` et `audit_debug_entrees.py`
   + tests `test_loguru_regles.py` (chaque `except` journalisé, aucun `import logging`, logger de module,
   références figées) ; instrumentation loguru de 11 modules ; l'`except` muet du parser comware
