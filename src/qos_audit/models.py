@@ -18,6 +18,7 @@ __all__ = [
     "QosClass",
     "Severity",
     "Site",
+    "combined_error_pct",
     "rel_error_pct",
     "wide_port_range",
 ]
@@ -40,6 +41,30 @@ def rel_error_pct(samples: int, margin: float = 1.0) -> float:
     err = 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
     logger.debug("rel_error_pct: retour | n={} -> {:.1f} %", samples, err)
     return err
+
+
+def combined_error_pct(total_bytes: float, sum_sq: float) -> tuple[float, float]:
+    """Erreur relative à 95 % d'une somme d'octets extrapolés enregistrement par enregistrement (#27).
+
+    Chaque enregistrement ``i`` pèse ``x_i = N_i × b_i`` (son propre taux × ses octets). Sous échantillonnage
+    aléatoire, Var(Σ x_i) ≈ Σ x_i², d'où une erreur de 1,96 × √(Σ x_i²) / Σ x_i. Les taux mélangés (ports LAN
+    échantillonnés différemment) et la dispersion des tailles de paquets y sont mesurés, pas supposés : aucune marge
+    n'est appliquée. Avec un taux et une taille uniques, on retrouve 196 / √n.
+
+    Args:
+        total_bytes: Σ x_i.
+        sum_sq: Σ x_i².
+
+    Returns:
+        ``(erreur en %, nombre d'échantillons effectif (Σ x_i)² / Σ x_i²)`` ; ``(inf, 0)`` sans octets.
+    """
+    if total_bytes <= 0 or sum_sq <= 0:
+        logger.debug("combined_error_pct: retour | aucun octet")
+        return float("inf"), 0.0
+    err = 196.0 * math.sqrt(sum_sq) / total_bytes
+    n_eff = total_bytes**2 / sum_sq
+    logger.debug("combined_error_pct: retour | n_eff={:.1f} -> {:.1f} %", n_eff, err)
+    return err, n_eff
 
 
 def wide_port_range(m: FlowMatch, max_ports: int = WIDE_PORT_RANGE) -> tuple[int, int] | None:

@@ -148,15 +148,34 @@ class ElastiflowClient:
         rng = {"range": {"@timestamp": {"gte": w.start.isoformat(), "lt": w.end.isoformat()}}}
         return {"bool": {"filter": [rng] + ([extra_filter] if extra_filter else [])}}
 
+    def _bytes_expr(self) -> str | None:
+        """Octets extrapolés d'un enregistrement en Painless, ou ``None`` s'ils valent le champ brut."""
+        logger.debug("_bytes_expr: entrée | scale={} overhead={}", self._scale, self._overhead)
+        expr: str | None = None
+        if self._scale or self._overhead:
+            expr = f"doc['{FIELDS['bytes']}'].value"
+            if self._overhead:
+                expr = f"({expr} - {self._overhead} * doc['{FIELDS['packets']}'].value)"
+            if self._scale:
+                expr += f" * Math.max(1, doc['{FIELDS['sampling']}'].value)"
+        logger.debug("_bytes_expr: sortie | {}", expr)
+        return expr
+
     def _bytes_agg(self) -> dict:
-        if not self._scale and not self._overhead:
-            return {"sum": {"field": FIELDS["bytes"]}}
-        expr = f"doc['{FIELDS['bytes']}'].value"
-        if self._overhead:
-            expr = f"({expr} - {self._overhead} * doc['{FIELDS['packets']}'].value)"
-        if self._scale:
-            expr += f" * Math.max(1, doc['{FIELDS['sampling']}'].value)"
-        return {"sum": {"script": {"source": expr}}}
+        """Somme des octets extrapolés (champ brut sans extrapolation ni correction)."""
+        logger.debug("_bytes_agg: entrée")
+        expr = self._bytes_expr()
+        agg = {"sum": {"field": FIELDS["bytes"]}} if expr is None else {"sum": {"script": {"source": expr}}}
+        logger.debug("_bytes_agg: sortie | {}", agg)
+        return agg
+
+    def _bytes_sq_agg(self) -> dict:
+        """Σ x_i² des octets extrapolés par enregistrement : incertitude combinée par classe (#27)."""
+        logger.debug("_bytes_sq_agg: entrée")
+        expr = self._bytes_expr() or f"doc['{FIELDS['bytes']}'].value"
+        agg = {"sum": {"script": {"source": f"Math.pow({expr}, 2)"}}}
+        logger.debug("_bytes_sq_agg: sortie | {}", agg)
+        return agg
 
     def bytes_by(
         self, w: Window, group_by: list[str], extra_filter: dict | None = None, size: int = 1000, max_pages: int = 20
@@ -171,7 +190,8 @@ class ElastiflowClient:
             max_pages: Garde-fou sur le nombre de pages.
 
         Returns:
-            Lignes ``{<clé>: valeur, "bytes": float, "samples": int}``.
+            Lignes ``{<clé>: valeur, "bytes": float, "bytes_sq": float, "samples": int}`` ; ``bytes_sq`` est la
+            somme des carrés des octets extrapolés par enregistrement (``models.combined_error_pct``).
         """
         sources = [{k: {"terms": {"field": FIELDS[k]}}} for k in group_by]
         rows: list[dict] = []
@@ -183,10 +203,13 @@ class ElastiflowClient:
             body = {
                 "size": 0,
                 "query": self._query(w, extra_filter),
-                "aggs": {"g": {"composite": comp, "aggs": {"b": self._bytes_agg()}}},
+                "aggs": {"g": {"composite": comp, "aggs": {"b": self._bytes_agg(), "q": self._bytes_sq_agg()}}},
             }
             agg = self._os.search(index=self._index, body=body)["aggregations"]["g"]
-            rows += [{**b["key"], "bytes": b["b"]["value"], "samples": b["doc_count"]} for b in agg["buckets"]]
+            rows += [
+                {**b["key"], "bytes": b["b"]["value"], "bytes_sq": b["q"]["value"], "samples": b["doc_count"]}
+                for b in agg["buckets"]
+            ]
             after = agg.get("after_key")
             if not after or not agg["buckets"]:
                 return rows

@@ -2,7 +2,8 @@
 
 Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur relative à 95 %** (196/√n, multipliée par
 `bytes_error_margin` pour des octets de tailles variables). Sous `min_samples` (300 par défaut), le verdict est
-`INCONCLUSIVE`, jamais `OK`.
+`INCONCLUSIVE`, jamais `OK`. Pour `marking` et `class_share`, l'erreur est l'incertitude combinée mesurée sur les
+enregistrements (taux mélangés et tailles de paquets, `effective_samples` dans la preuve ; voir `LIMITES.md`, #27).
 
 | Contrôle (`check`) | Question posée | Gravité | Détectabilité |
 |---|---|---|---|

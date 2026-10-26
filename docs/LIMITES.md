@@ -23,6 +23,13 @@ Erreur relative à 95 % ≈ 196 / √n, où n est le nombre d'échantillons :
 
 Les petits flux et les voix courtes sont mal représentés avec un taux de 1/1000. Les constats sous `min_samples` sont `INCONCLUSIVE`.
 
+**Incertitude combinée par classe (#27).** Pour `marking` et `class_share`, l'erreur affichée n'est plus la borne
+196/√n × marge mais celle de la somme des octets extrapolés enregistrement par enregistrement : avec
+x_i = taux_i × octets_i, erreur ≈ 1,96 × √(Σ x_i²) / Σ x_i, et n effectif = (Σ x_i)² / Σ x_i² (dans `evidence`).
+Les taux mélangés et la dispersion des tailles de paquets y sont mesurés (aucune marge appliquée) ; avec un taux et
+une taille uniques, on retrouve 196/√n. Exemple : 360 échantillons à 1:128 et 40 à 1:4096 donnent n effectif ≈ 65,
+soit ±24 % au lieu de ±10 %.
+
 ## Autres limites
 
 - **Capacité ≠ vitesse du port.** Un port de 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200. Renseigner `capacity_bps`.
@@ -40,7 +47,9 @@ Les petits flux et les voix courtes sont mal représentés avec un taux de 1/100
 - **Délai d'ingestion** : les dernières minutes arrivent en retard dans ElastiFlow. La fenêtre d'audit est décalée du délai mesuré
   en phase 0 (P7) ; sans calibration, ce délai est supposé nul et les volumes récents peuvent être sous-comptés.
 - **Taux d'échantillonnage par interface d'entrée** : une vue « sortie WAN » mélange les taux des ports LAN qui l'alimentent.
-  `sampling_adequacy` retient le taux le plus grand parmi ceux qui portent au moins 10 % des échantillons.
+  `sampling_adequacy` retient le taux le plus grand parmi ceux qui portent au moins 10 % des échantillons ; si plusieurs
+  taux sont significatifs, le constat recommande d'échantillonner en sortie sur l'interface WAN (un taux unique) quand
+  le modèle le permet (#27). L'extrapolation, elle, se fait enregistrement par enregistrement avec son propre taux.
 - **Facteur d'échantillonnage inconnu** : sans P6, l'outil suppose qu'il n'est pas appliqué ; si ElastiFlow l'applique déjà,
   les volumes sont faux d'un facteur N. Le contrôle `calibration` le signale.
 - **Classes de l'opérateur** : D1, D2 et D3 (AF31, AF21, AF11) sont des hypothèses tant que l'opérateur ne les a pas confirmées

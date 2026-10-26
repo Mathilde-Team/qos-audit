@@ -214,7 +214,12 @@ def _client(*reponses: dict, **options) -> tuple[ElastiflowClient, Reponses]:
 
 
 def _page(cles: list[int], apres: dict | None) -> dict:
-    g = {"buckets": [{"key": {"dscp": k}, "doc_count": 10, "b": {"value": 100.0 * k}} for k in cles]}
+    g = {
+        "buckets": [
+            {"key": {"dscp": k}, "doc_count": 10, "b": {"value": 100.0 * k}, "q": {"value": 1000.0 * k * k}}
+            for k in cles
+        ]
+    }
     return {"g": g | ({"after_key": apres} if apres else {})}
 
 
@@ -222,9 +227,9 @@ def test_client_bytes_by_pagine_et_extrapole():
     c, faux = _client(_page([0, 46], {"dscp": 46}), _page([48], None))
     rows = c.bytes_by(W, ["dscp"], {"term": {"x": 1}}, size=2)
     assert rows == [
-        {"dscp": 0, "bytes": 0.0, "samples": 10},
-        {"dscp": 46, "bytes": 4600.0, "samples": 10},
-        {"dscp": 48, "bytes": 4800.0, "samples": 10},
+        {"dscp": 0, "bytes": 0.0, "bytes_sq": 0.0, "samples": 10},
+        {"dscp": 46, "bytes": 4600.0, "bytes_sq": 1000.0 * 46 * 46, "samples": 10},
+        {"dscp": 48, "bytes": 4800.0, "bytes_sq": 1000.0 * 48 * 48, "samples": 10},
     ]
     (idx, premier), (_, second) = faux.corps
     assert idx == "elastiflow-flow-*" and "after" not in premier["aggs"]["g"]["composite"]

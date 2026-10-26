@@ -16,6 +16,7 @@ from qos_audit.calibration import Calibration, ExporterCal, Validation
 from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import (
+    combined_error_pct,
     Direction,
     Exit,
     Finding,
@@ -82,9 +83,34 @@ def _finding(
     direction: str | None = None,
     samples: int | None = None,
     evidence: dict | None = None,
+    combined: tuple[float, float] | None = None,
 ) -> Finding:
-    err = rel_error_pct(samples, p.thresholds.get("bytes_error_margin", 1.0)) if samples is not None else None
-    return Finding(check, sev, subject, msg, evidence or {}, site.name if site else None, direction, samples, err)
+    """Constat ; ``combined`` (erreur, n effectif) remplace la borne 196/√n × marge quand il est mesuré (#27)."""
+    logger.debug("_finding: entrée | {} {} {}", check, sev.name, subject)
+    if combined is not None:
+        err: float | None = combined[0]
+        evidence = {**(evidence or {}), "effective_samples": round(combined[1], 1)}
+    else:
+        err = rel_error_pct(samples, p.thresholds.get("bytes_error_margin", 1.0)) if samples is not None else None
+    f = Finding(check, sev, subject, msg, evidence or {}, site.name if site else None, direction, samples, err)
+    logger.debug("_finding: sortie | erreur={}", err)
+    return f
+
+
+def _combined(rows: list[dict]) -> tuple[float, float] | None:
+    """Incertitude combinée d'un ensemble de lignes ``bytes_by`` (#27), ou ``None`` si elle n'est pas mesurable.
+
+    Mesurable quand chaque ligne porte ``bytes_sq`` et que les lignes totalisent des octets ; sinon l'appelant garde
+    la borne 196/√n × marge.
+    """
+    logger.debug("_combined: entrée | {} ligne(s)", len(rows))
+    if not rows or any("bytes_sq" not in r for r in rows):
+        logger.debug("_combined: sortie | non mesurable (bytes_sq absent)")
+        return None
+    err, n_eff = combined_error_pct(sum(r["bytes"] for r in rows), sum(r["bytes_sq"] for r in rows))
+    result = (err, n_eff) if n_eff > 0 else None
+    logger.debug("_combined: sortie | {}", result)
+    return result
 
 
 def _enough(samples: int, p: Policy) -> bool:
@@ -191,6 +217,7 @@ def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_sit
                         direction="egress",
                         samples=samples,
                         evidence={"dscp_seen": rows, "match": str(m)},
+                        combined=_combined(rows),
                     )
                 )
     return out
@@ -380,7 +407,8 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
             for cls in p.classes:
                 if cls.max_share_pct is None:
                     continue
-                share = 100 * sum(r["bytes"] for r in rows if r["dscp"] in cls.dscp) / total
+                cls_rows = [r for r in rows if r["dscp"] in cls.dscp]
+                share = 100 * sum(r["bytes"] for r in cls_rows) / total
                 sev = Severity.OK if share <= cls.max_share_pct else Severity.WARN
                 if not _enough(samples, p):
                     sev = Severity.INCONCLUSIVE
@@ -394,6 +422,7 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
                         site=site,
                         direction=d,
                         samples=samples,
+                        combined=_combined(cls_rows),
                     )
                 )
     return out
@@ -800,6 +829,14 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                 sev = Severity.WARN
             msg = f"1:{worst} observé, recommandé 1:{rec} ; erreur au plancher ±{err:.1f}% (cible {th['sampling_error_target_pct']}%)"
             evidence = {"rates": dict(per_rate), "recommended": rec, "error_pct": err, "capacity_bps": ex.capacity_bps}
+            if len(significant) > 1:
+                # Taux des ports LAN d'entrée mélangés dans la vue de la sortie (#27) : un échantillonnage en sortie
+                # sur l'interface WAN donne un taux unique, celui que recommande ce contrôle.
+                msg += (
+                    f" ; taux mélangés ({', '.join(f'1:{r}' for r in sorted(significant))}) : échantillonner en sortie"
+                    " sur l'interface WAN si le modèle le permet"
+                )
+                evidence["mixed_rates"] = sorted(significant)
             out.append(
                 _finding(
                     p,
