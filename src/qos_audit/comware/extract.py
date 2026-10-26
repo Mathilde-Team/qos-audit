@@ -68,16 +68,19 @@ def load_devices(paths: list[Path], exporter: str | None = None) -> list[DeviceQ
     Returns:
         Un ``DeviceQos`` par fichier.
     """
+    logger.debug("load_devices: entrée | {} chemin(s)", len(paths))
     files: list[Path] = []
     for p in paths:
         files += sorted([*p.glob("*.cfg"), *p.glob("*.txt")]) if p.is_dir() else [p]
     if exporter and len(files) != 1:
         msg = "--exporter n'est valable que pour un seul fichier de configuration"
+        logger.debug("load_devices: sortie (refus) | {} fichier(s) avec --exporter", len(files))
         raise ValueError(msg)
     devices = []
     for f in files:
         logger.info("Analyse de {}", f)
         devices.append(parse_device(f.read_text(encoding="utf-8", errors="replace"), exporter, f.name))
+    logger.debug("load_devices: sortie | {} équipement(s)", len(devices))
     return devices
 
 
@@ -117,6 +120,7 @@ def _applications(dev: DeviceQos, policy: str) -> list[str]:
     apps = [f"{i.name} {d}" for i in dev.interfaces.values() for p, d in i.applied if p == policy]
     apps += [f"global {d}" for p, d in dev.global_apps if p == policy]
     apps += [f"vlan {v} {d}" for p, d, v in dev.vlan_apps if p == policy]
+    logger.debug("_applications: sortie | {} application(s) de {}", len(apps), policy)
     return apps
 
 
@@ -140,11 +144,14 @@ def _flag_wide_ranges(dev: DeviceQos, subject: str, matches: list[FlowMatch]) ->
 
 def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], bool]:
     """Critères d'un classifier : (FlowMatch, catch_all)."""
+    logger.debug("_classifier_matches: entrée | {}", name)
     if name == "default-class":
+        logger.debug("_classifier_matches: sortie | default-class, catch-all")
         return [], True
     cls = dev.classifiers.get(name)
     if cls is None:
         dev.issues.append(Issue("ERROR", "classifier_not_found", name, "classifier référencé mais non défini"))
+        logger.debug("_classifier_matches: sortie | classifier {} introuvable", name)
         return [], False
     catch_all = any(k == "any" for k, _ in cls.criteria)
     acls = [v for k, v in cls.criteria if k == "acl"]
@@ -167,11 +174,13 @@ def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], boo
         converted = acl_to_matches(dev, acl)
         _flag_wide_ranges(dev, acl.label, converted)
         matches += converted
+    logger.debug("_classifier_matches: sortie | {} match(s) pour {}", len(matches), name)
     return matches, catch_all and not matches
 
 
 def marking_rules(dev: DeviceQos) -> list[MarkingRule]:
     """Règles de marquage (``remark dscp`` / ``remark ip-precedence``) des policies effectivement appliquées."""
+    logger.debug("marking_rules: entrée | {} policy(ies)", len(dev.policies))
     rules: list[MarkingRule] = []
     for pol in dev.policies.values():
         apps = _applications(dev, pol.name)
@@ -191,15 +200,20 @@ def marking_rules(dev: DeviceQos) -> list[MarkingRule]:
                     dev.exporter, pol.name, entry.classifier, beh.name, beh.dscp, tuple(matches), catch_all, tuple(apps)
                 )
             )
+    logger.debug("marking_rules: sortie | {} règle(s)", len(rules))
     return rules
 
 
 def _dedupe(matches: list[FlowMatch]) -> list[FlowMatch]:
+    logger.debug("_dedupe: sortie | {} -> {} unique(s)", len(matches), len(dict.fromkeys(matches)))
     return list(dict.fromkeys(matches))
 
 
 def _match_to_dict(m: FlowMatch) -> dict:
+    logger.debug("_match_to_dict: entrée | {}", m)
+
     def rng(r: tuple[int, int] | None) -> str | None:
+        logger.debug("_match_to_dict.rng: sortie | {}", r)
         return None if r is None else (str(r[0]) if r[0] == r[1] else f"{r[0]}-{r[1]}")
 
     d = {"protocol": m.protocol, "src_cidr": m.src_cidr, "dst_cidr": m.dst_cidr,
@@ -207,11 +221,13 @@ def _match_to_dict(m: FlowMatch) -> dict:
     d = {k: v for k, v in d.items() if v is not None}
     if m.excludes:  # #21 : les deny précédents, sérialisés comme le match lui-même
         d["excludes"] = [_match_to_dict(e) for e in m.excludes]
+    logger.debug("_match_to_dict: sortie | {} clé(s)", len(d))
     return d
 
 
 def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tuple[str, str], int]) -> list[dict]:
     """Interfaces d'entrée où un classifier « tout le reste » ramène le DSCP à une valeur autorisée."""
+    logger.debug("_untrusted: entrée | {} règle(s)", len(rules))
     out: list[dict] = []
     for r in rules:
         if not (r.catch_all and r.dscp in allowed):
@@ -225,6 +241,7 @@ def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tu
             if key in ifmap:
                 entry["ifindex"] = ifmap[key]
             out.append(entry)
+    logger.debug("_untrusted: sortie | {} interface(s)", len(out))
     return out
 
 
@@ -246,6 +263,7 @@ def build_policy(
     Returns:
         ``(politique sous forme de dictionnaire YAML, extraction avec règles et constats)``.
     """
+    logger.debug("build_policy: entrée | {} équipement(s)", len(devices))
     ifmap = ifmap or {}
     ext = Extraction(devices=devices)
     for dev in devices:
@@ -320,6 +338,12 @@ def build_policy(
     _divergences(ext)
     for dev in devices:
         ext.issues += dev.issues
+    logger.debug(
+        "build_policy: sortie | {} classe(s), {} règle(s), {} constat(s)",
+        len(classes),
+        len(ext.rules),
+        len(ext.issues),
+    )
     return policy, ext
 
 
@@ -504,16 +528,19 @@ def render_site_report(sites: dict[str, tuple[dict, Extraction]], issues: list[I
 
 def policy_to_yaml(policy: dict, sources: list[str]) -> str:
     """Sérialise la politique avec un en-tête de provenance."""
+    logger.debug("policy_to_yaml: entrée | {} source(s)", len(sources))
     head = (
         "# Généré par `qos-audit extract` depuis : "
         + ", ".join(sources)
         + "\n# À relire avant usage (voir extraction_report.md).\n"
     )
+    logger.debug("policy_to_yaml: sortie | {} caractère(s)", len(head))
     return head + yaml.safe_dump(policy, sort_keys=False, allow_unicode=True)
 
 
 def render_report(ext: Extraction, policy: dict) -> str:
     """Rapport Markdown : couverture par équipement, règles de marquage, constats."""
+    logger.debug("render_report: entrée | {} équipement(s), {} règle(s)", len(ext.devices), len(ext.rules))
     lines = ["# Rapport d'extraction QoS", "", "## Équipements", "",
              "| Exporteur | Fichier | ACL | Classifiers | Behaviors | Policies | Interfaces avec policy |", "|---|---|---|---|---|---|---|"]  # fmt: skip
     for d in ext.devices:
@@ -547,4 +574,5 @@ def render_report(ext: Extraction, policy: dict) -> str:
         lines.append(f"- **{i.level}** `{i.code}` {i.subject} : {i.message}")
     if not ext.issues:
         lines.append("- aucun")
+    logger.debug("render_report: sortie | {} ligne(s)", len(lines))
     return "\n".join(lines) + "\n"
