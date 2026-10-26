@@ -9,6 +9,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Contrôle `capacity` (#13) : WARN par sortie quand `capacity_bps` est absent (repli sur `speed_bps`), égal à la
+  vitesse du port (CIR du contrat à confirmer) ou supérieur à elle ; exécuté en tête d'`audit`, sans requête à
+  OpenSearch. Le relevé opérateur par site et par sortie (CIR, débit crête, sens) reste à reporter dans la politique.
 - Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
   défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
   de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,

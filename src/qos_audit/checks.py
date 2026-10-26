@@ -37,6 +37,7 @@ from qos_audit.sampling import (
 __all__ = [
     "check_calibration",
     "check_counter_consistency",
+    "check_capacity",
     "match_filter",
     "run_all",
 ]
@@ -149,6 +150,44 @@ def _exits(p: Policy, only_site: str | None):
             continue
         for ex in site.exits:
             yield site, ex
+
+
+def check_capacity(p: Policy, only_site: str | None = None) -> list[Finding]:
+    """Capacité contractuelle déclarée pour chaque sortie (#13) : capacité ≠ vitesse du port.
+
+    Un port 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200 : sans ``capacity_bps`` réel, utilisation,
+    saturation et sampling recommandé sont calculés sur une base fausse. WARN quand ``capacity_bps`` est
+    absent (repli sur ``speed_bps``), égal à la vitesse du port (CIR non vérifiée) ou supérieur à elle
+    (incohérent).
+
+    Args:
+        p: Politique (sites et sorties).
+        only_site: Restreint le contrôle à un site.
+
+    Returns:
+        Un constat WARN par sortie douteuse, ou un constat OK unique.
+    """
+    logger.debug("check_capacity: entrée | site={}", only_site)
+    out: list[Finding] = []
+    for site, ex in _exits(p, only_site):
+        subject = f"{ex.exporter}:if{ex.ifindex} ({ex.name})"
+        evidence = {"speed_bps": ex.speed_bps, "capacity_bps": ex.capacity_bps}
+        if not ex.capacity_declared:
+            msg = (
+                "capacity_bps absent : repli sur la vitesse du port, utilisation sous-estimée si la CIR est plus basse"
+            )
+        elif ex.capacity_bps == ex.speed_bps:
+            msg = "capacity_bps égal à la vitesse du port : CIR du contrat à confirmer (débit montant ≠ descendant)"
+        elif ex.capacity_bps > ex.speed_bps:
+            msg = "capacity_bps supérieur à la vitesse du port : valeur incohérente"
+        else:
+            continue
+        out.append(_finding(p, "capacity", Severity.WARN, subject, msg, site=site, evidence=evidence))
+    result = out or [
+        _finding(p, "capacity", Severity.OK, "sorties", "capacité contractuelle renseignée pour chaque sortie")
+    ]
+    logger.debug("check_capacity: sortie | {} constat(s)", len(result))
+    return result
 
 
 def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
@@ -998,6 +1037,7 @@ def run_all(
     """
     counters = counters or NullCounters()
     findings: list[Finding] = []
+    findings += check_capacity(p, only_site)
     findings += check_marking_conformity(c, p, w, only_site)
     findings += check_dscp_plan(c, p, w, only_site)
     findings += check_untrusted_ports(c, p, w)
