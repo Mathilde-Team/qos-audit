@@ -37,6 +37,7 @@ from qos_audit.sampling import (
 __all__ = [
     "check_calibration",
     "check_counter_consistency",
+    "check_encapsulated_traffic",
     "match_filter",
     "run_all",
 ]
@@ -765,6 +766,198 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
     return out
 
 
+# Signatures d'encapsulation (issue #30) : après IPsec, GRE ou SD-WAN, seul l'en-tête externe et son
+# DSCP sont visibles. Est « encapsulé » : GRE/ESP (protocoles IP 47 et 50), IKE 500 et NAT-T 4500
+# (établissement IPsec, cf. docs constructeurs Extreme/Huawei/Oracle), et les ports UDP SD-WAN
+# documentés : Cisco Catalyst/Viptela 12346 (base, sauts 12366/12386/12406/12426 — Design Guide
+# Cisco SD-WAN), VMware VeloCloud VCMP 2426, Silver Peak tunnel UDP 4163.
+TUNNEL_IP_PROTOS = (47, 50)
+TUNNEL_UDP_PORTS = (500, 4500, 2426, 4163, 12346, 12366, 12386, 12406, 12426)
+
+
+def _tunnel_ports_clause() -> dict:
+    """Clause « UDP sur un port de tunnel/SD-WAN » (source ou destination)."""
+    logger.debug("_tunnel_ports_clause: entrée")
+    clause = {
+        "bool": {
+            "should": [
+                {"terms": {FIELDS["dst_port"]: list(TUNNEL_UDP_PORTS)}},
+                {"terms": {FIELDS["src_port"]: list(TUNNEL_UDP_PORTS)}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+    logger.debug("_tunnel_ports_clause: sortie")
+    return clause
+
+
+def _tunnel_filter(base: dict) -> dict:
+    """Filtre « trafic encapsulé » : protocole IP GRE/ESP, ou UDP sur un port de tunnel/SD-WAN."""
+    logger.debug("_tunnel_filter: entrée")
+    filtre = _and(
+        base,
+        {
+            "bool": {
+                "should": [
+                    {"terms": {FIELDS["ip_proto"]: list(TUNNEL_IP_PROTOS)}},
+                    _and({"term": {FIELDS["proto"]: "udp"}}, _tunnel_ports_clause()),
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+    )
+    logger.debug("_tunnel_filter: sortie")
+    return filtre
+
+
+def check_encapsulated_traffic(
+    c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None
+) -> list[Finding]:
+    """Part du trafic encapsulé (IPsec, GRE, SD-WAN) par sortie et sens, et DSCP externe (issue #30).
+
+    Au-delà de ``encapsulated_inconclusive_pct`` (majorité par défaut), l'audit de classes n'est
+    pas concluant : mesurer avant le tunnel. Le DSCP externe du trafic encapsulé renseigne la
+    copie du DSCP interne (``qos pre-classify`` ou équivalent) : majoritairement par défaut =
+    copie probablement absente, à vérifier ; majoritairement marqué = copie probable.
+    """
+    logger.debug("check_encapsulated_traffic: entrée")
+    out: list[Finding] = []
+    th = p.thresholds
+    for site, ex in _exits(p, only_site):
+        for d in _DIRS:
+            base = exit_filter(ex.exporter, ex.ifindex, d)
+            rows = c.bytes_by(w, ["ip_proto"], base)
+            total_bytes = sum(r["bytes"] for r in rows)
+            samples = sum(r["samples"] for r in rows)
+            subject = f"{site.name}/{ex.name}"
+            if not samples:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        "aucun enregistrement : exporteur muet ou champs à vérifier",
+                        site=site,
+                        direction=d,
+                    )
+                )
+                continue
+            if not _enough(samples, p):
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        f"trop peu d'échantillons ({samples}) pour juger la part encapsulée",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                    )
+                )
+                continue
+            tunnel_rows = c.bytes_by(w, ["ip_proto"], _tunnel_filter(base))
+            tunnel_bytes = sum(r["bytes"] for r in tunnel_rows)
+            share = 100.0 * tunnel_bytes / total_bytes if total_bytes else 0.0
+            evidence = {
+                "tunnel_bytes": tunnel_bytes,
+                "total_bytes": total_bytes,
+                "share_pct": round(share, 2),
+            }
+            if share > th["encapsulated_inconclusive_pct"]:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        f"{share:.1f}% du trafic est encapsulé (IPsec/GRE/SD-WAN) : "
+                        "audit de classes non concluant, mesurer avant le tunnel",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence=evidence,
+                    )
+                )
+            else:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.OK,
+                        subject,
+                        f"{share:.1f}% du trafic est encapsulé (IPsec/GRE/SD-WAN)",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence=evidence,
+                    )
+                )
+            out += _constat_dscp_tunnel(c, p, w, base, subject, site, d, tunnel_bytes)
+    logger.debug("check_encapsulated_traffic: sortie | {} constat(s)", len(out))
+    return out
+
+
+def _constat_dscp_tunnel(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    base: dict,
+    subject: str,
+    site: Site,
+    direction: str,
+    tunnel_bytes: float,
+) -> list[Finding]:
+    """DSCP externe du trafic encapsulé : la copie du DSCP interne (pre-classify) est-elle faite ?"""
+    logger.debug("_constat_dscp_tunnel: entrée")
+    if tunnel_bytes <= 0:
+        logger.debug("_constat_dscp_tunnel: sortie | rien à juger (pas de trafic encapsulé)")
+        return []
+    dscp_rows = c.bytes_by(w, ["dscp"], _tunnel_filter(base))
+    tunnel_samples = sum(r["samples"] for r in dscp_rows)
+    if not _enough(tunnel_samples, p):
+        logger.debug("_constat_dscp_tunnel: sortie | non concluant (échantillons)")
+        return [
+            _finding(
+                p,
+                "encapsulated_dscp",
+                Severity.INCONCLUSIVE,
+                subject,
+                f"trop peu d'échantillons ({tunnel_samples}) pour juger la copie du DSCP",
+                site=site,
+                direction=direction,
+                samples=tunnel_samples,
+            )
+        ]
+    default_bytes = sum(r["bytes"] for r in dscp_rows if int(r["dscp"]) == 0)
+    default_share = 100.0 * default_bytes / tunnel_bytes
+    if default_share > p.thresholds["encapsulated_default_dscp_warn_pct"]:
+        msg = (
+            f"{default_share:.1f}% du trafic encapsulé sort en DSCP par défaut : copie du DSCP "
+            "interne vers l'en-tête externe probablement absente, vérifier `qos pre-classify` "
+            "(ou équivalent)"
+        )
+        sev = Severity.WARN
+    else:
+        msg = f"{100 - default_share:.1f}% du trafic encapsulé porte un DSCP marqué : copie du DSCP interne probable"
+        sev = Severity.OK
+    logger.debug("_constat_dscp_tunnel: sortie | {}", sev.name)
+    return [
+        _finding(
+            p,
+            "encapsulated_dscp",
+            sev,
+            subject,
+            msg,
+            site=site,
+            direction=direction,
+            samples=tunnel_samples,
+            evidence={"default_dscp_share_pct": round(default_share, 2), "tunnel_bytes": tunnel_bytes},
+        )
+    ]
+
+
 def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Sampling observé vs sampling recommandé pour la capacité de la sortie (précision et coût).
 
@@ -1007,6 +1200,7 @@ def run_all(
     findings += check_counter_consistency(c, p, w, only_site)
     findings += check_congestion(c, p, w, counters, only_site)
     findings += check_exit_balance(c, p, w, only_site)
+    findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
     if cal is not None:
         findings += check_calibration(p, cal)
