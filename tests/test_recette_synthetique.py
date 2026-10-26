@@ -30,7 +30,7 @@ from qos_audit.checks import (
 )
 from qos_audit.comware.extract import marking_rules
 from qos_audit.comware.parser import parse_device
-from qos_audit.counters import NullCounters
+from qos_audit.counters import NullCounters, ReleveDrops
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window
 from qos_audit.models import Severity
 from qos_audit.policy import load_policy
@@ -156,13 +156,18 @@ def test_congestion_ecn_et_drops(pol):
         def queue_drops(self, exporter, ifindex, w):
             if exporter == "rtr-a-02":
                 raise NotImplementedError
-            return {"EF": 12, "BE": 0}
+            # Interval d'observation plus large que la fenêtre : les drops ne sont
+            # jamais présentés comme survenus dans la seule fenêtre analysée.
+            return ReleveDrops({"EF": 12, "BE": 0}, W.start - timedelta(hours=1), W.end + timedelta(minutes=5))
 
     res = {(f.check, f.subject): f for f in check_congestion(lab, pol, W, Compteurs())}
     assert res[("congestion_ecn", "site-a/wan1")].severity is Severity.WARN
     assert res[("congestion_ecn", "site-a/wan2")].severity is Severity.OK
     drops = res[("congestion_drops", "site-a/wan1")]
-    assert drops.severity is Severity.CRIT and drops.message == "12 paquets droppés"
+    assert drops.severity is Severity.CRIT
+    assert drops.message.startswith("12 paquets droppés entre ")
+    # le message expose l'intervalle d'observation, pas une attribution à la fenêtre
+    assert "07:00" in drops.message and "09:05" in drops.message
     assert ("congestion_drops", "site-a/wan2") not in res
     # aucune source branchée : constat ECN seul
     assert {f.check for f in check_congestion(lab, pol, W, NullCounters())} == {"congestion_ecn"}

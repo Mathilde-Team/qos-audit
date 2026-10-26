@@ -29,9 +29,26 @@ __all__ = [
     "CounterSource",
     "InterfaceRates",
     "NullCounters",
+    "ReleveDrops",
     "interfaces_depuis_csv",
     "rates_from_counters",
 ]
+
+
+@dataclass(frozen=True)
+class ReleveDrops:
+    """Drops par file mesurés sur un intervalle d'observation.
+
+    Un compteur cumulé ne se lit qu'entre deux relevés : les drops appartiennent à
+    ``[depuis, jusqu_a]``, qui **contient** la fenêtre demandée mais peut la déborder
+    (cadence des audits, délai d'ingestion). Des drops survenus hors de la fenêtre
+    sont inclus dans le total : le rapport présente cet intervalle, il n'attribue
+    jamais les drops à la seule fenêtre.
+    """
+
+    par_file: dict[str, int]
+    depuis: datetime
+    jusqu_a: datetime
 
 
 @dataclass(frozen=True)
@@ -149,8 +166,8 @@ def rates_from_counters(samples: list[dict], w: Window, direction: str) -> Inter
 class CounterSource(Protocol):
     """Fournisseur de compteurs de drops."""
 
-    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
-        """Drops par file/classe sur la fenêtre.
+    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> ReleveDrops | None:
+        """Drops par file — tels que mesurables.
 
         Args:
             exporter: Nom de l'équipement.
@@ -158,7 +175,10 @@ class CounterSource(Protocol):
             w: Fenêtre d'analyse.
 
         Returns:
-            ``{nom_de_file_ou_classe: paquets_droppés}``.
+            ``ReleveDrops`` : drops par file sur l'intervalle d'observation
+            (contient ``w``, peut la déborder — le rapport le présente ainsi) ;
+            ``None`` : pas de mesure exploitable (premier relevé, fenêtre non
+            couverte, sortie inconnue). Jamais de zéro inventé.
         """
         ...
 
@@ -166,9 +186,9 @@ class CounterSource(Protocol):
 class NullCounters:
     """Aucune source : les constats de congestion restent indirects (ECN, utilisation)."""
 
-    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
+    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> ReleveDrops | None:
         logger.debug("queue_drops: source absente | {}/{}", exporter, ifindex)
-        return {}
+        return None
 
 
 class ComwareCliCounters:
@@ -252,8 +272,8 @@ class ComwareCliCounters:
         logger.debug("ComwareCliCounters._releve: sortie | {} file(s)", len(drops))
         return datetime.now(UTC), drops
 
-    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
-        """Drops par file sur la fenêtre — seulement si deux relevés l'encadrent.
+    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> ReleveDrops | None:
+        """Drops par file — seulement si deux relevés encadrent la fenêtre.
 
         Args:
             exporter: Nom de l'équipement.
@@ -261,16 +281,18 @@ class ComwareCliCounters:
             w: Fenêtre d'analyse.
 
         Returns:
-            ``{file: paquets droppés}`` si le relevé précédent est antérieur
-            au début de la fenêtre (l'intervalle des deux relevés la contient
-            entièrement) ; sinon ``{}`` : premier relevé, fenêtre non couverte,
-            sortie inconnue ou illisible — jamais de zéro inventé.
+            ``ReleveDrops`` : delta par file sur l'intervalle d'observation
+            ``[relevé précédent, relevé courant]``, qui contient ``w`` mais peut la
+            déborder — le rapport présente cet intervalle, les drops ne sont
+            jamais attribués à la seule fenêtre. ``None`` : premier relevé,
+            fenêtre non couverte, sortie inconnue ou illisible, compteur
+            diminué — jamais de zéro inventé.
         """
         logger.debug("queue_drops: entrée | {}/{} fenêtre={}", exporter, ifindex, w)
         releve = self._releve(exporter, ifindex)
         if releve is None:
             logger.debug("queue_drops: sortie | pas de relevé exploitable")
-            return {}
+            return None
         maintenant, drops = releve
         etat = self._lire_etat()
         cle = f"{exporter}|{ifindex}"
@@ -284,7 +306,7 @@ class ComwareCliCounters:
                 ifindex,
             )
             logger.debug("queue_drops: sortie | premier relevé")
-            return {}
+            return None
         precedent_ts = datetime.fromisoformat(precedent["ts"])
         if precedent_ts > w.start or maintenant < w.end:
             logger.warning(
@@ -295,7 +317,7 @@ class ComwareCliCounters:
                 maintenant,
             )
             logger.debug("queue_drops: sortie | fenêtre non couverte")
-            return {}
+            return None
         deltas: dict[str, int] = {}
         for file, valeur in drops.items():
             ancienne = precedent["drops"].get(file, 0)
@@ -307,10 +329,10 @@ class ComwareCliCounters:
                     file,
                 )
                 logger.debug("queue_drops: sortie | compteur diminué")
-                return {}
+                return None
             deltas[file] = valeur - ancienne
-        logger.debug("queue_drops: sortie | {} file(s)", len(deltas))
-        return deltas
+        logger.debug("queue_drops: sortie | {} file(s) sur [{}, {}]", len(deltas), precedent_ts, maintenant)
+        return ReleveDrops(par_file=deltas, depuis=precedent_ts, jusqu_a=maintenant)
 
 
 def interfaces_depuis_csv(path: Path) -> dict[tuple[str, int], str]:

@@ -611,20 +611,26 @@ def check_congestion(
         except NotImplementedError:
             logger.debug("Source de compteurs non implémentée pour {}", ex.exporter)
             continue
-        if drops:
-            lost = sum(drops.values())
-            out.append(
-                _finding(
-                    p,
-                    "congestion_drops",
-                    Severity.CRIT if lost else Severity.OK,
-                    f"{site.name}/{ex.name}",
-                    f"{lost} paquets droppés",
-                    site=site,
-                    direction="egress",
-                    evidence=drops,
-                )
+        if drops is None:
+            continue
+        lost = sum(drops.par_file.values())
+        out.append(
+            _finding(
+                p,
+                "congestion_drops",
+                Severity.CRIT if lost else Severity.OK,
+                f"{site.name}/{ex.name}",
+                f"{lost} paquets droppés entre {drops.depuis:%d/%m %H:%M} et "
+                f"{drops.jusqu_a:%d/%m %H:%M} UTC (intervalle d'observation contenant la fenêtre)",
+                site=site,
+                direction="egress",
+                evidence={
+                    "par_file": drops.par_file,
+                    "depuis": drops.depuis.isoformat(),
+                    "jusqu_a": drops.jusqu_a.isoformat(),
+                },
             )
+        )
     return out
 
 
