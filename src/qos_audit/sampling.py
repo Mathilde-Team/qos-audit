@@ -11,6 +11,7 @@ __all__ = [
     "SamplingParams",
     "detection_probability",
     "expected_error_pct",
+    "min_bucket_seconds",
     "params_from_thresholds",
     "recommended_sampling",
     "samples_needed",
@@ -113,6 +114,31 @@ def worst_case_samples_per_s(link_bps: float, rate: int, size_bytes: int = 100) 
         Échantillons par seconde pour une interface.
     """
     return link_bps / (8 * size_bytes) / max(1, rate)
+
+
+def min_bucket_seconds(
+    link_bps: float, rate: int, min_samples: int, load_ratio: float, size_bytes: int = 1500
+) -> float:
+    """Plancher de bucket (#28) : durée minimale pour qu'un bucket porte ``min_samples`` échantillons.
+
+    Un bucket plus court que ce plancher, sur un lien chargé à ``load_ratio`` de sa capacité, contient trop peu
+    d'échantillons pour juger saturation et débordement de classe : les microbursts plus courts restent invisibles.
+
+    Args:
+        link_bps: Capacité effective du lien (CIR).
+        rate: N de ``1:N``.
+        min_samples: Échantillons voulus par bucket (seuil ``min_samples`` de la politique).
+        load_ratio: Charge du lien en fraction de la capacité (seuil d'alerte, ex. 0,7).
+        size_bytes: Taille de paquet IP supposée.
+
+    Returns:
+        Durée minimale en secondes ; ``inf`` sans trafic.
+    """
+    logger.debug("min_bucket_seconds: entrée | lien={} 1:{} min_samples={}", link_bps, rate, min_samples)
+    per_s = link_bps * load_ratio / (8 * size_bytes) / max(1, rate)
+    floor = min_samples / per_s if per_s > 0 else math.inf
+    logger.debug("min_bucket_seconds: retour | lien={} 1:{} charge={} -> {:.1f} s", link_bps, rate, load_ratio, floor)
+    return floor
 
 
 def detection_probability(expected_samples: float) -> float:

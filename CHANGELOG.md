@@ -9,6 +9,10 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Microbursts (#28) : option `--bucket` d'`audit` et `advise` (10s, 1m…), colonne « bucket min s » de
+  `qos-audit sampling` (plancher de bucket selon le sampling, `sampling.min_bucket_seconds`), signalement d'un bucket
+  sous ce plancher dans le constat `saturation` en repli sur les flux, et constat WARN `microburst` quand des drops de
+  file coexistent avec une saturation au bucket sous le seuil d'alerte.
 - Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
   défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
   de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,
