@@ -9,6 +9,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Sous-commande `ifindex-map` (#18) : interroge chaque exporteur en SNMP v2c (`snmpwalk`, `ifDescr` par défaut ou
+  `ifName`) et écrit le CSV `exporter,ifindex,name` d'`extract --ifindex-map` ; communauté lue dans
+  `QOS_AUDIT_SNMP_COMMUNITY` et masquée dans les erreurs ; un exporteur injoignable n'arrête pas les autres.
 - Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
   défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
   de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,
