@@ -14,6 +14,7 @@ from loguru import logger
 from qos_audit.advisor.catalog import load_catalog
 from qos_audit.advisor.discover import discover_unclassified
 from qos_audit.advisor.recommend import recommend
+from qos_audit.advisor.bulk import render_shaper_policy
 from qos_audit.advisor.render_comware import render_marking_policy
 from qos_audit.calibration import Calibration, apply_calibration, default_calibration, load_calibration
 from qos_audit.checks import run_all
@@ -70,8 +71,10 @@ def _audit(a: argparse.Namespace) -> int:
     client, cal, window = _setup(a)
     rows: list[dict] = []
     worst = 0
+    # catalogue optionnel : contrôle du trafic de masse hors plage (#34)
+    bulk = {"apps": load_catalog(a.catalog), "tz": a.timezone} if a.catalog else {}
     for policy in load_policies(a.policy, a.site):
-        for f in run_all(client, policy, window, only_site=a.site, cal=cal):
+        for f in run_all(client, policy, window, only_site=a.site, cal=cal, **bulk):
             row = asdict(f) | {"severity": f.severity.name}
             if row not in rows:  # constats globaux (calibration) répétés d'un site à l'autre
                 rows.append(row)
@@ -83,6 +86,7 @@ def _audit(a: argparse.Namespace) -> int:
 
 
 def _advise(a: argparse.Namespace) -> int:
+    logger.debug("_advise: entrée | {} site={}", a.policy, a.site)
     policies = load_policies(a.policy, a.site)
     if len(policies) > 1:
         logger.error("advise sur un dossier de politiques par site : préciser --site")
@@ -95,7 +99,11 @@ def _advise(a: argparse.Namespace) -> int:
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "recommandations.json").write_text(json.dumps([asdict(r) for r in recos], indent=2), encoding="utf-8")
     (a.out / "brouillon_comware.cfg").write_text(render_marking_policy(recos), encoding="utf-8")
+    shaper = render_shaper_policy(recos)
+    if shaper:  # trafic de masse sans classe sous BF (#34)
+        (a.out / "brouillon_shaper.cfg").write_text(shaper, encoding="utf-8")
     logger.info("{} recommandations écrites dans {}", len(recos), a.out)
+    logger.debug("_advise: sortie | 0")
     return 0
 
 
@@ -184,6 +192,8 @@ def main() -> int:
         s.set_defaults(fn=fn)
         if name == "audit":
             s.add_argument("--out", type=Path, default=Path("qos_report.json"))
+            s.add_argument("--catalog", type=Path, help="catalogue validé : active le contrôle bulk_business_hours")
+            s.add_argument("--timezone", default="Europe/Paris", help="fuseau des plages horaires du catalogue")
         else:
             s.add_argument("--catalog", type=Path, required=True)
             s.add_argument("--out", type=Path, default=Path("qos_advice"))

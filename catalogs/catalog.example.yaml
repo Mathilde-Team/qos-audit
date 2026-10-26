@@ -17,5 +17,5 @@ applications:
   - name: sauvegarde
     target_class: bf                   # l'opérateur n'a pas de classe sous BF : shaper/plage horaire locaux (voir Q5-3)
     match: {protocol: tcp, ports: "6160-6162"}   # EXEMPLE : à adapter à vos outils de sauvegarde
-    profile: {bulk: true, plage_horaire: "22-06"}
+    profile: {bulk: true, plage_horaire: "22-06"}   # shape_pct: 20 (défaut) = débit du shaper hors plage, % de la capacité
     confidence: medium
