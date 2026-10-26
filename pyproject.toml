@@ -25,7 +25,9 @@ line-length = 120
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Les tests d'intégration (#17) demandent un OpenSearch : job CI « Intégration OpenSearch » (pytest -m integration).
+addopts = "-ra -m 'not integration'"
+markers = ["integration: requiert un OpenSearch joignable (variable OPENSEARCH_URL)"]
 
 [tool.coverage.run]
 # Couverture des branches obligatoire (SOCLE.md §4).
