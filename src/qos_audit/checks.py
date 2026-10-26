@@ -768,9 +768,14 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
 
 # Signatures d'encapsulation (issue #30) : après IPsec, GRE ou SD-WAN, seul l'en-tête externe et son
 # DSCP sont visibles. Est « encapsulé » : GRE/ESP (protocoles IP 47 et 50), IKE 500 et NAT-T 4500
-# (établissement IPsec, cf. docs constructeurs Extreme/Huawei/Oracle), et les ports UDP SD-WAN
-# documentés : Cisco Catalyst/Viptela 12346 (base, sauts 12366/12386/12406/12426 — Design Guide
-# Cisco SD-WAN), VMware VeloCloud VCMP 2426, Silver Peak tunnel UDP 4163.
+# (établissement IPsec, cf. docs constructeurs : https://documentation.extremenetworks.com/SD-WAN/latest/
+# ExtremeCloud_SD-WAN_Online_Help/Content/network/Prerequisites.htm et https://www.cisco.com/c/en/us/
+# solutions/collateral/enterprise-networks/sd-wan/sd-wan-remote-access-wp.html), et les ports UDP
+# SD-WAN documentés : Cisco Catalyst/Viptela 12346 (base, sauts 12366/12386/12406/12426 — Design
+# Guide Cisco SD-WAN : https://www.cisco.com/c/en/us/td/docs/solutions/CVD/SDWAN/cisco-sd-wan-design-guide.html),
+# VMware VeloCloud VCMP 2426 (https://www.dell.com/support/manuals/en-us/sd-wan-edge-3000/edge3400-aag/
+# dell-emc-sd-wan-edge-3400-installation-considerations), Silver Peak tunnel UDP 4163
+# (https://www.silver-peak.com/sites/default/files/userdocs/speak_ports_used_july2015.pdf).
 TUNNEL_IP_PROTOS = (47, 50)
 TUNNEL_UDP_PORTS = (500, 4500, 2426, 4163, 12346, 12366, 12386, 12406, 12426)
 
@@ -816,9 +821,13 @@ def check_encapsulated_traffic(
     """Part du trafic encapsulé (IPsec, GRE, SD-WAN) par sortie et sens, et DSCP externe (issue #30).
 
     Au-delà de ``encapsulated_inconclusive_pct`` (majorité par défaut), l'audit de classes n'est
-    pas concluant : mesurer avant le tunnel. Le DSCP externe du trafic encapsulé renseigne la
-    copie du DSCP interne (``qos pre-classify`` ou équivalent) : majoritairement par défaut =
-    copie probablement absente, à vérifier ; majoritairement marqué = copie probable.
+    pas concluant : mesurer avant le tunnel. Total et trafic tunnel sont mesurés par la même
+    agrégation sur le DSCP (toujours présent) : les enregistrements sans ce champ ne faussent
+    ni l'un ni l'autre. La signature GRE/ESP (protocole IP) reste la partie la moins certaine —
+    un champ ``ip_proto`` absent sous-estime le trafic tunnel, donc la part, sans inventer de
+    verdict. Le DSCP externe du trafic encapsulé est une observation : la copie du DSCP interne
+    (classification avant encapsulation, marquage statique) ne se vérifie pas de l'extérieur,
+    le constat reste non concluant avec sa consigne de vérification.
     """
     logger.debug("check_encapsulated_traffic: entrée")
     out: list[Finding] = []
@@ -826,7 +835,7 @@ def check_encapsulated_traffic(
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
             base = exit_filter(ex.exporter, ex.ifindex, d)
-            rows = c.bytes_by(w, ["ip_proto"], base)
+            rows = c.bytes_by(w, ["dscp"], base)
             total_bytes = sum(r["bytes"] for r in rows)
             samples = sum(r["samples"] for r in rows)
             subject = f"{site.name}/{ex.name}"
@@ -857,7 +866,7 @@ def check_encapsulated_traffic(
                     )
                 )
                 continue
-            tunnel_rows = c.bytes_by(w, ["ip_proto"], _tunnel_filter(base))
+            tunnel_rows = c.bytes_by(w, ["dscp"], _tunnel_filter(base))
             tunnel_bytes = sum(r["bytes"] for r in tunnel_rows)
             share = 100.0 * tunnel_bytes / total_bytes if total_bytes else 0.0
             evidence = {
@@ -894,7 +903,7 @@ def check_encapsulated_traffic(
                         evidence=evidence,
                     )
                 )
-            out += _constat_dscp_tunnel(c, p, w, base, subject, site, d, tunnel_bytes)
+            out += _constat_dscp_tunnel(c, p, w, base, subject, site, d, tunnel_rows, tunnel_bytes)
     logger.debug("check_encapsulated_traffic: sortie | {} constat(s)", len(out))
     return out
 
@@ -907,15 +916,22 @@ def _constat_dscp_tunnel(
     subject: str,
     site: Site,
     direction: str,
+    tunnel_rows: list[dict],
     tunnel_bytes: float,
 ) -> list[Finding]:
-    """DSCP externe du trafic encapsulé : la copie du DSCP interne (pre-classify) est-elle faite ?"""
+    """DSCP externe du trafic encapsulé : observation, jamais un verdict sur la copie interne.
+
+    La copie du DSCP interne (classification avant encapsulation — ``pre-classify`` chez
+    Cisco —, recopie ou marquage statique de l'en-tête externe) ne se prouve pas depuis
+    l'en-tête externe : un DSCP par défaut peut être la copie correcte d'un trafic best
+    effort interne, un DSCP marqué un marquage statique du tunnel. Le constat reste donc
+    INCONCLUSIVE et porte la répartition observée avec la consigne de vérification.
+    """
     logger.debug("_constat_dscp_tunnel: entrée")
     if tunnel_bytes <= 0:
-        logger.debug("_constat_dscp_tunnel: sortie | rien à juger (pas de trafic encapsulé)")
+        logger.debug("_constat_dscp_tunnel: sortie | rien à observer (pas de trafic encapsulé)")
         return []
-    dscp_rows = c.bytes_by(w, ["dscp"], _tunnel_filter(base))
-    tunnel_samples = sum(r["samples"] for r in dscp_rows)
+    tunnel_samples = sum(r["samples"] for r in tunnel_rows)
     if not _enough(tunnel_samples, p):
         logger.debug("_constat_dscp_tunnel: sortie | non concluant (échantillons)")
         return [
@@ -924,36 +940,36 @@ def _constat_dscp_tunnel(
                 "encapsulated_dscp",
                 Severity.INCONCLUSIVE,
                 subject,
-                f"trop peu d'échantillons ({tunnel_samples}) pour juger la copie du DSCP",
+                f"trop peu d'échantillons ({tunnel_samples}) pour observer le DSCP du trafic encapsulé",
                 site=site,
                 direction=direction,
                 samples=tunnel_samples,
             )
         ]
-    default_bytes = sum(r["bytes"] for r in dscp_rows if int(r["dscp"]) == 0)
+    default_bytes = sum(r["bytes"] for r in tunnel_rows if int(r["dscp"]) == 0)
     default_share = 100.0 * default_bytes / tunnel_bytes
-    if default_share > p.thresholds["encapsulated_default_dscp_warn_pct"]:
-        msg = (
-            f"{default_share:.1f}% du trafic encapsulé sort en DSCP par défaut : copie du DSCP "
-            "interne vers l'en-tête externe probablement absente, vérifier `qos pre-classify` "
-            "(ou équivalent)"
-        )
-        sev = Severity.WARN
-    else:
-        msg = f"{100 - default_share:.1f}% du trafic encapsulé porte un DSCP marqué : copie du DSCP interne probable"
-        sev = Severity.OK
-    logger.debug("_constat_dscp_tunnel: sortie | {}", sev.name)
+    msg = (
+        f"DSCP externe du trafic encapsulé : {default_share:.1f}% par défaut, "
+        f"{100 - default_share:.1f}% marqué — copie du DSCP interne non vérifiable depuis "
+        "l'en-tête externe, contrôler la configuration du tunnel (classification avant "
+        "encapsulation / pre-classify, recopie ou marquage statique)"
+    )
+    logger.debug("_constat_dscp_tunnel: sortie | observation émise")
     return [
         _finding(
             p,
             "encapsulated_dscp",
-            sev,
+            Severity.INCONCLUSIVE,
             subject,
             msg,
             site=site,
             direction=direction,
             samples=tunnel_samples,
-            evidence={"default_dscp_share_pct": round(default_share, 2), "tunnel_bytes": tunnel_bytes},
+            evidence={
+                "default_dscp_share_pct": round(default_share, 2),
+                "marked_dscp_share_pct": round(100 - default_share, 2),
+                "tunnel_bytes": tunnel_bytes,
+            },
         )
     ]
 

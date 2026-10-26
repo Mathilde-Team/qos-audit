@@ -36,7 +36,6 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "counter_consistency_max_dev_pct": 20,  # écart flux extrapolés vs compteurs au-delà duquel on s'alerte
     "port_range_max_ports": WIDE_PORT_RANGE,  # plage sans IP au-delà : trop large (#32)
     "encapsulated_inconclusive_pct": 50,  # part du trafic encapsulé au-delà : audit non concluant (#30)
-    "encapsulated_default_dscp_warn_pct": 90,  # part du trafic encapsulé en DSCP par défaut : pre-classify à vérifier (#30)
     "voice_max_packet_bytes": 300,  # paquet voix : G.711 20 ms = 200 o IP ; au-delà, pas de la voix
     "port_range_non_voice_max_pct": 10,  # part tolérée d'octets non voix dans une classe voix par plage
 }
