@@ -28,6 +28,8 @@ from qos_audit.comware.extract import (
     render_site_report,
     site_policy_filename,
 )
+from qos_audit.comware.ssh_netmiko import TransportNetmiko
+from qos_audit.counters import ComwareCliCounters, CounterSource, interfaces_depuis_csv
 from qos_audit.elastiflow import ElastiflowClient, Window
 from qos_audit.policy import load_policies, load_policy
 from qos_audit.sampling import SamplingParams, expected_error_pct, recommended_sampling, worst_case_samples_per_s
@@ -68,10 +70,21 @@ def _audit(a: argparse.Namespace) -> int:
     """Audit : une politique, ou celle de chaque site (dossier de ``extract --per-site``)."""
     logger.debug("_audit: entrée | {} site={}", a.policy, a.site)
     client, cal, window = _setup(a)
+    compteurs: CounterSource | None = None
+    if getattr(a, "comware_drops", None):
+        if not getattr(a, "comware_interfaces", None):
+            logger.error("--comware-drops exige --comware-interfaces (CSV exporter,ifindex,name)")
+            logger.debug("_audit: sortie | 2")
+            return 2
+        compteurs = ComwareCliCounters(
+            TransportNetmiko(),
+            interfaces_depuis_csv(a.comware_interfaces),
+            a.comware_drops,
+        )
     rows: list[dict] = []
     worst = 0
     for policy in load_policies(a.policy, a.site):
-        for f in run_all(client, policy, window, only_site=a.site, cal=cal):
+        for f in run_all(client, policy, window, counters=compteurs, only_site=a.site, cal=cal):
             row = asdict(f) | {"severity": f.severity.name}
             if row not in rows:  # constats globaux (calibration) répétés d'un site à l'autre
                 rows.append(row)
@@ -184,6 +197,16 @@ def main() -> int:
         s.set_defaults(fn=fn)
         if name == "audit":
             s.add_argument("--out", type=Path, default=Path("qos_report.json"))
+            s.add_argument(
+                "--comware-drops",
+                type=Path,
+                help="active la collecte des drops par file en SSH Comware ; mémorise les relevés dans CE fichier JSON",
+            )
+            s.add_argument(
+                "--comware-interfaces",
+                type=Path,
+                help="CSV exporter,ifindex,name des sorties à interroger (exigé par --comware-drops)",
+            )
         else:
             s.add_argument("--catalog", type=Path, required=True)
             s.add_argument("--out", type=Path, default=Path("qos_advice"))

@@ -6,7 +6,12 @@ La **conformité du marquage observé** et la **charge offerte par classe**, à 
 
 ## Ce qu'il ne prouve pas
 
-1. **Que la priorisation fonctionne.** sFlow ne voit ni files ni drops. Preuve directe : compteurs Comware ou SNMP (`counters.py`).
+1. **Que la priorisation fonctionne.** sFlow ne voit ni files ni drops. Preuve directe : compteurs Comware
+   ou SNMP (`counters.py`). La collecte CLI Comware est implémentée (`ComwareCliCounters`, issue #10) :
+   les drops ne se mesurent qu'entre **deux** exécutions d'audit — la première pose la référence —
+   et uniquement si la fenêtre d'analyse est entièrement comprise entre les deux relevés (exécutions plus
+   rapprochées que la fenêtre + le délai d'ingestion ⇒ aucun delta, jamais proratisé). Certaines versions
+   (5130) n'exposent pas les drops par file : sortie non mesurable, pas de zéro inventé.
 2. **La qualité vécue** (latence, jitter, perte). Prévoir RTCP/HEP, des sondes actives ou des flux synthétiques marqués.
 3. **Ce qui se passe dans le LAN**, hors des sorties instrumentées.
 

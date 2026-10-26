@@ -29,6 +29,11 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
     # une politique par site (policy.<site>.yaml), puis audit de chaque site avec sa politique
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
     qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 [--site site-a]
+    # drops par file en SSH Comware (issue #10) : « uv sync --extra comware », identifiants par
+    # QOS_AUDIT_SSH_USER / QOS_AUDIT_SSH_PASSWORD (jamais journalisés), CSV des sorties d'extract.
+    # Les drops ne se mesurent qu'entre deux exécutions encadrant la fenêtre (cf. docs/LIMITES.md).
+    qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 \
+                     --comware-drops etat-drops.json --comware-interfaces configs/ifindex.csv
 
 ## Avant la première exécution
 
