@@ -24,8 +24,8 @@
 | `sampling.py` | `recommended_sampling`, `expected_error_pct`, `worst_case_samples_per_s`, `samples_needed` |
 | `elastiflow.py` | `FIELDS`/`COUNTER_FIELDS` (surchargeables), `configure_fields`/`configure_counter_fields`, `exit_filter`, `bytes_by` (paginé), `bytes_timeseries`, `counter_samples` (index de télémétrie), base de comptage |
 | `checks.py` | Contrôles par site/sortie/sens, `run_all` ; saturation/class_overflow sur les compteurs avec repli signalé, `counter_consistency` |
-| `counters.py` | `rates_from_counters` (débits exacts : resets, rebouclage 32 bits, couverture) ; interface `CounterSource` (drops par file) ; implémentation Comware à écrire |
-| `comware/` | `parser` (blocs, ACL, object-groups, classifiers, behaviors, policies, interfaces), `convert` (wildcard, ports, DSCP), `extract` (règles de marquage, politique, rapport) |
+| `counters.py` | `rates_from_counters` (débits exacts : resets, rebouclage 32 bits, couverture) ; interface `CounterSource` (drops par file) ; `ComwareCliCounters` (collecte CLI Comware, issue #10) + `interfaces_depuis_csv` |
+| `comware/` | `parser` (blocs, ACL, object-groups, classifiers, behaviors, policies, interfaces), `convert` (wildcard, ports, DSCP), `extract` (règles de marquage, politique, rapport), `queue_stats` (sortie `display qos queue-statistics`), `ssh_netmiko` (transport SSH netmiko, extra `comware`) |
 | `advisor/` | `catalog`, `discover`, `recommend`, `simulate`, `render_comware` |
 | `verify.py` | Comparaison de deux rapports |
 | `cli.py` | Sous-commandes `audit`, `advise`, `compare`, `sampling`, `extract` |
