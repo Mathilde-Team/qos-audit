@@ -31,6 +31,7 @@ FIELDS = {
     "dst_ip": "destination.ip",
     "src_port": "source.port",
     "dst_port": "destination.port",
+    "ip_proto": "network.iana_number",  # numéro de protocole IP (47 GRE, 50 ESP) — À VÉRIFIER
     "bytes": "network.bytes",
     "packets": "network.packets",
     "sampling": "flow.sampling.interval",
