@@ -62,4 +62,10 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 Le job CI « Qualité (lint, tests) » applique les mêmes contrôles ; le seuil de couverture (lignes et branches)
 est lu dans `pyproject.toml`.
 
+Les tests d'intégration (`tests/test_integration_opensearch.py`, #17) rejouent les requêtes du client ElastiFlow
+contre un vrai OpenSearch ; ils sont exclus de `make test` et tournent dans le job CI « Intégration OpenSearch »
+(non bloquant). En local, avec un OpenSearch sans sécurité sur le port 9200 :
+
+    OPENSEARCH_URL=http://localhost:9200 uv run pytest -m integration tests/test_integration_opensearch.py
+
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.

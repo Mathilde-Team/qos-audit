@@ -9,6 +9,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
+- Tests d'intégration contre un vrai OpenSearch (#17) : `tests/test_integration_opensearch.py` (marqueur
+  `integration`, exclu par défaut) indexe 24 h de flux et de counter samples ElastiFlow synthétiques et vérifie le
+  composite paginé, le `date_histogram` à la minute, l'extrapolation par le sampling, la correction trame → IP, les
+  counter samples et les temps de réponse sur 60 min et 24 h ; job CI « Intégration OpenSearch » non bloquant
+  (OpenSearch 2.19.1 en service conteneur, runner `ubuntu-24.04`).
 - Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
   défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
   de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,

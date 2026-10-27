@@ -50,3 +50,49 @@ jobs:
           uv run --no-project --python 3.11
           --with pytest==9.1.1 --with pytest-cov==7.1.0 --with-editable .
           pytest --cov=src/qos_audit --cov-branch --cov-report=term-missing
+
+  # Intégration contre un vrai OpenSearch (#17). Non bloquant au début, comme
+  # le demande l'issue : ce job n'est pas un check requis et continue-on-error
+  # le garde hors du verdict de la PR. Runner hébergé par GitHub (service
+  # conteneur ~250 Mo) pour épargner le disque des runners maison
+  # (Mathilde-Team/.github#12) ; image et runner figés.
+  integration:
+    name: Intégration OpenSearch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2.19.1
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -fsS http://localhost:9200/_cluster/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v7
+
+      - name: Installation de uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Installation de Python
+        run: uv python install 3.11
+
+      # --durations=0 : temps de réponse des requêtes sur 60 min et 24 h dans
+      # le journal du job (case « performances » de #17).
+      - name: Tests d'intégration (pytest -m integration)
+        env:
+          OPENSEARCH_URL: http://localhost:9200
+        run: >
+          uv run --no-project --python 3.11
+          --with pytest==9.1.1 --with-editable .
+          pytest -m integration tests/test_integration_opensearch.py --durations=0
