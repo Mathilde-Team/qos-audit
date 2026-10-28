@@ -119,6 +119,7 @@ def load_ifindex_map(path: Path) -> dict[tuple[str, str], int]:
 
 
 def _applications(dev: DeviceQos, policy: str) -> list[str]:
+    logger.debug("_applications: entrée | politique={}", policy)
     apps = [f"{i.name} {d}" for i in dev.interfaces.values() for p, d in i.applied if p == policy]
     apps += [f"global {d}" for p, d in dev.global_apps if p == policy]
     apps += [f"vlan {v} {d}" for p, d, v in dev.vlan_apps if p == policy]

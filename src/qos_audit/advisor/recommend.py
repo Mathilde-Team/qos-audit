@@ -49,12 +49,17 @@ class Recommendation:
 
 
 def _find_app(cluster: FlowCluster, apps: list[App]) -> App | None:
+    logger.debug("_find_app: entrée | proto={} port={}", cluster.proto, cluster.dst_port)
     for a in apps:
         if a.protocol and a.protocol != cluster.proto:
             continue
         if a.ports and not a.ports[0] <= cluster.dst_port <= a.ports[1]:
             continue
+        logger.debug(
+            "_find_app: sortie | app trouvée",
+        )
         return a
+    logger.debug("_find_app: sortie | aucune application")
     return None
 
 
@@ -157,4 +162,6 @@ def recommend(
                     cl.share_pct,
                 )
             )
-    return sorted(recos, key=lambda r: r.impact_pct, reverse=True)
+    recos = sorted(recos, key=lambda r: r.impact_pct, reverse=True)
+    logger.debug("recommend: sortie | {} recommandation(s)", len(recos))
+    return recos

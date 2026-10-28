@@ -51,4 +51,6 @@ def render_marking_policy(recos: list[Recommendation], policy_name: str = "QOS-M
             "",
             f"# interface <LAN> ; qos apply policy {policy_name} inbound",
         ]
-    return "\n".join(lines) + "\n"
+    cfg = "\n".join(lines) + "\n"
+    logger.debug("render_marking_policy: sortie | {} ligne(s)", len(lines))
+    return cfg

@@ -147,6 +147,7 @@ class ElastiflowClient:
                 (14 si ElastiFlow additionne des octets de trame ; résultat de la phase 0, P5).
             counters_index: Pattern d'index des counter samples sFlow (défaut : ``DEFAULT_COUNTERS_INDEX``).
         """
+        logger.debug("ElastiflowClient.__init__: entrée | hotes={} index={}", len(hosts), index)
         self._os = OpenSearch(hosts=hosts)
         self._index = index
         self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
@@ -166,6 +167,7 @@ class ElastiflowClient:
         return {"bool": {"filter": [rng] + ([extra_filter] if extra_filter else [])}}
 
     def _bytes_agg(self) -> dict:
+        logger.debug("_bytes_agg: entrée | échelle={} overhead={}", self._scale, self._overhead)
         if not self._scale and not self._overhead:
             logger.debug("_bytes_agg: sortie | somme directe")
             return {"sum": {"field": FIELDS["bytes"]}}
