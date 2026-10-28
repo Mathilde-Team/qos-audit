@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from loguru import logger
+
 __all__ = [
     "Acl",
     "AclRule",
@@ -82,7 +84,9 @@ class Behavior:
         """DSCP imposé (``remark dscp`` ou ``remark ip-precedence`` converti)."""
         if self.remark_dscp is not None:
             return self.remark_dscp
-        return None if self.remark_precedence is None else self.remark_precedence * 8
+        value = None if self.remark_precedence is None else self.remark_precedence * 8
+        logger.debug("Behavior.dscp: {} -> {}", self.name, value)
+        return value
 
 
 @dataclass(frozen=True)

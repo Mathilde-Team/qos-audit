@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from qos_audit.models import Policy
 
+from loguru import logger
+
 __all__ = ["ClassImpact", "what_if"]
 
 
@@ -38,14 +40,17 @@ def what_if(
     Returns:
         Impact par classe.
     """
+    logger.debug("what_if: entrée | {} classe(s), {} déplacement(s)", len(class_bps), len(moves))
     after = dict(class_bps)
     for src, dst, bps in moves:
         after[src] = max(0.0, after.get(src, 0.0) - bps)
         after[dst] = after.get(dst, 0.0) + bps
     budgets = {c.name: c.max_share_pct for c in p.classes}
-    return [
+    impacts = [
         ClassImpact(
             n, 100 * class_bps.get(n, 0.0) / capacity_bps, 100 * after.get(n, 0.0) / capacity_bps, budgets.get(n)
         )
         for n in sorted(set(class_bps) | set(after))
     ]
+    logger.debug("what_if: retour | {} impact(s)", len(impacts))
+    return impacts

@@ -9,14 +9,78 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ### Ajouté
 
-- Couverture : seuil bloquant à 91 % lignes et branches dans `pyproject.toml` (palier 1, #5) ;
-  tests du client ElastiFlow (fenêtres, filtres, agrégations, pagination) et des contrôles
+- Tests d'intégration contre un vrai OpenSearch (#17) : `tests/test_integration_opensearch.py` (marqueur
+  `integration`, exclu par défaut) indexe 24 h de flux et de counter samples ElastiFlow synthétiques et vérifie le
+  composite paginé, le `date_histogram` à la minute, l'extrapolation par le sampling, la correction trame → IP, les
+  counter samples et les temps de réponse sur 60 min et 24 h ; job CI « Intégration OpenSearch » non bloquant
+  (OpenSearch 2.19.1 en service conteneur, runner `ubuntu-24.04`).
+- Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
+  défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
+  de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,
+  extrapolation par enregistrement, séries) et les sous-commandes `advise`, `compare` et `sampling`. Seuil de
+  couverture porté à 95 % (mesure 95,90 %).
+- Politique par site (#23) : `extract --per-site` (avec `--base-policy`, rattachement par les sorties ou
+  `--site-map exporter,site`) écrit une `policy.<site>.yaml` par site, construite avec ses seuls équipements, et
+  une section « Politiques par site » dans le rapport ; `audit --policy <dossier>` charge la politique de chaque
+  site, ou du site audité avec `--site`. Le constat `devices_diverge` détaille les critères propres à chaque
+  équipement. Palier de couverture relevé de 83 à 85 % (mesure 85,36 %).
+- ACL par plages de ports trop larges (#32) : constat d'extraction `acl_port_range_wide` (plage de plus de
+  1024 ports sans IP) ; contrôle `port_range` : pour une classe voix, part de ses octets en paquets non voix
+  par sortie et IP candidates (IPBX, passerelles) à qui restreindre la classe ; seuils `port_range_max_ports`,
+  `voice_max_packet_bytes`, `port_range_non_voice_max_pct`. Palier de couverture relevé de 82 à 83 % (mesure
+  83,43 %).
+- Calibration multi-sites : bloc `validation` par exporteur dans `calibration.yaml` (date, modèle, firmware,
+  version d'ElastiFlow, sens, interface et sampling-rates validés, protocole §10.4) ; le contrôle `calibration`
+  signale un exporteur non couvert, une mise à jour du firmware ou d'ElastiFlow depuis la validation, un
+  sampling non validé ou une validation trop ancienne, avec la revalidation à prévoir (allégée ou complète).
+  Procédure de revalidation allégée dans `docs/CALIBRATION.md`. Palier de couverture relevé de 80 à 82 %
+  (mesure 82,07 %) (#35).
+- `policy.parse_comware_acl` s'appuie sur le parser et la conversion de `comware/` (une seule implémentation
+  wildcard → CIDR et ports `eq/gt/lt/neq/range`, source et destination) ; TODO remplacé par la liste de ce qui
+  reste non modélisé (#11).
+- Extraction : noms d'interface Comware normalisés (`GE1/0/10` = `GigabitEthernet1/0/10`, `XGE`, `BAGG`, `Vlan`…)
+  dans `--ifindex-map` et la détection des ports non fiables ; un nom à deux ifIndex est refusé. Palier de
+  couverture relevé de 79 à 80 % (mesure 80,11 %) (#24).
+- Journalisation (SOCLE §8) : scripts d'audit AST `audit_debug_sorties.py` et `audit_debug_entrees.py`
+  + tests `test_loguru_regles.py` (chaque `except` journalisé, aucun `import logging`, logger de module,
+  références figées) ; instrumentation loguru de 11 modules ; l'`except` muet du parser comware
+  est journalisé (#6).
+
+- ACL : les règles `deny` précédant un `permit` sont modélisées comme exclusions du
+  match (sémantique de première correspondance), traduites en clauses `must_not` dans
+  les requêtes ElastiFlow et sérialisées dans la politique ; le constat
+  `acl_deny_ignored` ne reste que pour les `deny` non modélisables (#21).
+- Compléments de tests (#5) :   tests du client ElastiFlow (fenêtres, filtres, agrégations, pagination) et des contrôles
   `dscp_plan`, `untrusted_ports`, `class_share`, `congestion`, `exit_balance`, `sampling_drift`,
   `calibration`, `run_all` ; tests du point d'entrée (`sampling`, `compare`, `audit`).
   Couverture mesurée : 91,14 %.
 
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
+- Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
+  (`uv.lock`, groupe `dev` avec ruff figé), couverture des branches et palier bloquant à 76 % (#1, #5).
+
+### Session 05 (2026-10-25)
+
+- **Utilisation calculée sur les compteurs d'interface à 30 s** (G6, #20) : lecture des counter samples sFlow dans ElastiFlow
+  (`elastiflow.py::counter_samples`, index `elastiflow-telemetry_flow-*` surchargeable) et calcul des débits exacts
+  (`counters.py::rates_from_counters` : horodatages réels, resets perdus jamais inventés, compteurs 64 bits, couverture).
+- `saturation` et `class_overflow` (donc le jugement « lien chargé » de la congestion) se calculent sur les compteurs ;
+  les flux ne servent plus qu'à la **répartition par classe** (octets du bucket × part des flux).
+- Nouveau contrôle `counter_consistency` : somme des flux extrapolés vs octets des compteurs, **sur les mêmes buckets
+  pleinement couverts** ; un écart au-delà de la marge (erreur d'échantillonnage, plancher `counter_consistency_max_dev_pct`)
+  signale un facteur d'échantillonnage faux (P6) ; « compteurs à zéro + flux positifs » et « compteurs positifs + aucun flux »
+  sont des WARN explicites.
+- Grille de buckets alignée sur l'epoch (comme `date_histogram`) ; seuls les buckets entièrement couverts portent un débit
+  (`partial_buckets`, `interpolated_buckets` dans les constats) ; `class_overflow` est INCONCLUSIVE si la répartition par
+  classe ne couvre pas assez de buckets.
+- Repli signalé sur les flux quand les compteurs sont absents, inaccessibles ou couvrent moins de
+  `counter_min_coverage_pct` (50 % par défaut) : `utilization_source` dans les constats, message « repli ».
+- Calibration : `elastiflow.counters_index` et `elastiflow.counter_fields`.
+- Seuils : `counter_min_coverage_pct`, `counter_consistency_max_dev_pct`.
+- Documentation : contrôles, limites, architecture, calibration mis à jour.
+- Qualité : 95 tests ; palier de couverture relevé de 76 à 79 % (mesure 79,78 %, lignes et branches) ;
+  fonctions ajoutées instrumentées (référence d'audit des sorties loguru abaissée à 144).
 
 ### Session 04 (2026-10-25)
 

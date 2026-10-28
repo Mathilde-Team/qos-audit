@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from loguru import logger
+
 __all__ = [
     "SamplingParams",
     "detection_probability",
@@ -73,7 +75,9 @@ def recommended_sampling(link_bps: float, p: SamplingParams | None = None) -> in
     """
     p = p or SamplingParams()
     n_max = max(1.0, _packets_at_floor(link_bps, p) / p.n_target)
-    return 2 ** math.floor(math.log2(n_max))
+    rate = 2 ** math.floor(math.log2(n_max))
+    logger.debug("recommended_sampling: retour | lien={} -> 1:{}", link_bps, rate)
+    return rate
 
 
 def expected_error_pct(link_bps: float, rate: int, p: SamplingParams | None = None) -> float:
@@ -89,9 +93,12 @@ def expected_error_pct(link_bps: float, rate: int, p: SamplingParams | None = No
     """
     p = p or SamplingParams()
     if rate <= 1:
+        logger.debug("expected_error_pct: retour | 1:1 -> 0 %")
         return 0.0
     n = _packets_at_floor(link_bps, p) / rate
-    return _Z95 * p.margin / math.sqrt(n) if n > 0 else math.inf
+    err = _Z95 * p.margin / math.sqrt(n) if n > 0 else math.inf
+    logger.debug("expected_error_pct: retour | lien={} 1:{} -> {:.1f} %", link_bps, rate, err)
+    return err
 
 
 def worst_case_samples_per_s(link_bps: float, rate: int, size_bytes: int = 100) -> float:
