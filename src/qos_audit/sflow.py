@@ -170,8 +170,9 @@ def sflow_findings(
     out: list[Finding] = []
 
     def add(sev: Severity, subject: str, msg: str) -> None:
-        logger.debug("constat sflow_config | {} {}", subject, msg)
+        logger.debug("add: entrée | {} {}", subject, msg)
         out.append(Finding("sflow_config", sev, subject, msg))
+        logger.debug("add: retour | {} constat(s) au total", len(out))
 
     for s in p.sites:
         for ex in s.exits:
