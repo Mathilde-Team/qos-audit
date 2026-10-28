@@ -89,6 +89,7 @@ def load_policy(path: Path) -> Policy:
             dscp=frozenset(c["dscp"]),
             priority=c["priority"],
             max_share_pct=c.get("max_share_pct"),
+            car_bps=c.get("car_bps"),
             dscp_confirmed=c.get("dscp_confirmed", True),
             match=tuple(
                 FlowMatch(

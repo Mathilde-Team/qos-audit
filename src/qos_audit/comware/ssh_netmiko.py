@@ -45,7 +45,7 @@ class TransportNetmiko:
             logger.error("identifiants SSH absents (QOS_AUDIT_SSH_USER, QOS_AUDIT_SSH_PASSWORD)")
             logger.debug("TransportNetmiko.__call__: sortie | ValueError")
             raise ValueError(
-                "QOS_AUDIT_SSH_USER et QOS_AUDIT_SSH_PASSWORD doivent être définis " "(jamais journalisés, issue #10)"
+                "QOS_AUDIT_SSH_USER et QOS_AUDIT_SSH_PASSWORD doivent être définis (jamais journalisés, issue #10)"
             )
         parametres: dict = {
             "device_type": "hp_comware",

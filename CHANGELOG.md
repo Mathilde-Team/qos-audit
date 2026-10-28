@@ -8,6 +8,16 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
+- Extraction QoS étendue (#25) : `qos trust` (frontière de confiance déclarée dans `trust.trusted` du `policy.yaml` et le
+  rapport, INFO `trust_et_remise_a_zero` si l'interface est aussi remise à zéro par un classifier « tout le reste »),
+  `qos map-table` (enregistré, INFO `map_table_non_modelisee`), `remark dot1p` (INFO `remark_dot1p_non_traduit`),
+  `car cir`/`queue bandwidth` (budgets théoriques `car_bps` par classe, le plus strict des behaviors l'emporte ;
+  `class_overflow` compare au budget effectif `min(max_share_pct × capacity_bps, car_bps)`, et évalue une classe sans
+  `max_share_pct` mais avec `car`), applications `global` et `vlan-policy` dans les ports non fiables (globale : toutes les
+  interfaces sans policy entrante propre ; vlan-policy : interfaces d'accès `port access vlan` des VLAN listés, INFO
+  `vlan_policy_sans_port` sinon).
+
+### Ajouté
 
 - Tests d'intégration contre un vrai OpenSearch (#17) : `tests/test_integration_opensearch.py` (marqueur
   `integration`, exclu par défaut) indexe 24 h de flux et de counter samples ElastiFlow synthétiques et vérifie le

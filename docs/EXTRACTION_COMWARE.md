@@ -43,10 +43,13 @@ Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
 | `source-port` / `destination-port` `eq\|gt\|lt\|neq\|range` | Intervalles de ports ; quelques noms de ports usuels (`www`, `smtp`, `domain`…) |
 | `object-group ip address` : `network subnet`, `host address`, `range` | Développés en CIDR ; autres formes signalées |
 | `traffic classifier <nom> operator and\|or` + `if-match acl …`, `if-match any`, `if-match protocol ip` | `or` : union des ACL ; `and` : une seule ACL retenue ; `any` : « tout le reste » |
-| `traffic behavior` : `remark dscp <nom\|0-63>`, `remark ip-precedence <n>` | Marquage DSCP (précédence × 8) ; `car`, `queue`, `remark dot1p`… conservés bruts dans le JSON |
+| `traffic behavior` : `remark dscp <nom\|0-63>`, `remark ip-precedence <n>` | Marquage DSCP (précédence × 8) ; `remark dot1p` signalé (INFO, non traduit) ; `car cir <kbps>` / `car cir percent <p>` et `queue bandwidth <kbps>` / `queue bandwidth percent <p>` extraits en budget théorique (`car_bps` par classe, le plus strict des behaviors l'emporte) ; le reste est conservé brut |
 | `qos policy` : `classifier <c> behavior <b>`, `classifier default-class` | Règle de marquage si le behavior remarque le DSCP |
 | `interface` : `qos apply policy <p> inbound\|outbound`, `qos trust`, `qos priority` | Application de la policy ; seules les policies **appliquées** produisent des règles |
-| `qos apply policy <p> global …`, `qos vlan-policy …` | Application enregistrée (non utilisée pour déduire les ports non fiables) |
+| `qos apply policy <p> global …`, `qos vlan-policy <p> vlan <liste> …` | Prises en compte dans les ports non fiables : l'application **globale** couvre les interfaces sans policy entrante propre, la **vlan-policy** les interfaces d'accès (`port access vlan`) des VLAN listés (INFO `vlan_policy_sans_port` si aucun port connu) |
+| `interface` : `port access vlan <n>` | VLAN d'accès, pour rattacher une `qos vlan-policy` à ses ports |
+| `qos map-table <nom> <type>` | Enregistré et signalé (INFO `map_table_non_modelisee`) : réinterprétation du DSCP non modélisée |
+| `interface` : `qos trust <mode>` | Frontière de confiance déclarée : listée dans `trust.trusted` du `policy.yaml` et dans le rapport ; une interface `qos trust` **et** remise à zéro par un classifier « tout le reste » est signalée (INFO `trust_et_remise_a_zero`) |
 
 ## Construction de la politique
 
@@ -104,9 +107,12 @@ le `match` d'une classe ne reprend plus les ACL des autres sites.
   (`acl_deny_ignored`) et le dit.
 - **Politique globale** : sans `--per-site`, les `match` de plusieurs équipements sont fusionnés. Si les ACL diffèrent par
   site, la vérification par site reste valable mais sur l'union des critères : utiliser `--per-site`.
-- **Non extraits** : `qos trust` et `qos map-table` (interprétation du DSCP), `car` et `queue` (budgets, files), `remark dot1p`,
-  profils sFlow par interface (candidat session 05 : alimenter `calibration.yaml`), applications `global` et `vlan-policy` dans
-  la détection des ports non fiables.
+- **Non extraits** : `remark dot1p` (seulement signalé, INFO), `qos map-table` (enregistré, interprétation du DSCP non
+  modélisée), profils sFlow par interface (candidat session 05 : alimenter `calibration.yaml`). Extraits depuis l'issue #25 :
+  `qos trust` (frontière de confiance, `trust.trusted`), `car`/`queue` (budgets théoriques `car_bps` par classe, le plus
+  strict des behaviors l'emporte ; le contrôle `class_overflow` compare au budget effectif
+  `min(max_share_pct × capacity_bps, car_bps)`), applications `global` et `vlan-policy` dans la détection des ports non
+  fiables (globale : interfaces sans policy entrante propre ; vlan-policy : interfaces d'accès des VLAN listés).
 - **Noms d'interface** : le CSV peut utiliser la forme courte (`ifName` SNMP : `GE1/0/10`, `XGE1/0/49`, `BAGG1`, `Vlan10`)
   ou la forme longue de la configuration (`ifDescr` : `GigabitEthernet1/0/10`). Les deux côtés sont normalisés vers la forme
   longue avant comparaison (casse et espace ignorés) : `Eth`, `GE`, `MGE`, `XGE`, `WGE`, `FGE`, `HGE`, `BAGG`, `RAGG`,

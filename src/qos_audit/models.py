@@ -93,7 +93,7 @@ class FlowMatch:
     dst_cidr: str | None = None
     src_ports: tuple[int, int] | None = None
     dst_ports: tuple[int, int] | None = None
-    excludes: tuple["FlowMatch", ...] = ()
+    excludes: tuple[FlowMatch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,7 @@ class QosClass:
     dscp: frozenset[int]
     priority: int
     max_share_pct: float | None = None
+    car_bps: int | None = None  # budget théorique ``car cir`` de la configuration (bps)
     match: tuple[FlowMatch, ...] = ()
     dscp_confirmed: bool = True
 
