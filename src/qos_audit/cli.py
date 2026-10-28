@@ -31,8 +31,10 @@ from qos_audit.comware.extract import (
 from qos_audit.comware.ssh_netmiko import TransportNetmiko
 from qos_audit.counters import ComwareCliCounters, CounterSource, interfaces_depuis_csv
 from qos_audit.elastiflow import ElastiflowClient, Window
+from qos_audit.models import Finding, Severity
 from qos_audit.policy import load_policies, load_policy
 from qos_audit.sampling import SamplingParams, expected_error_pct, recommended_sampling, worst_case_samples_per_s
+from qos_audit.sflow import load_configs, render_calibration_yaml, sflow_findings, to_calibration_section
 from qos_audit.verify import compare_reports
 
 __all__ = ["main"]
@@ -178,6 +180,31 @@ def _sampling(a: argparse.Namespace) -> int:
     return 0
 
 
+def _sflow(a: argparse.Namespace) -> int:
+    """Extrait le contexte sFlow des configurations vers calibration.yaml et liste les constats (#19)."""
+    logger.debug("_sflow: entrée | configs={}", a.cfg)
+    devices = load_configs(a.cfg, a.exporter)
+    ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
+    section = to_calibration_section(devices, ifmap)
+    yaml_text = render_calibration_yaml(section)
+    if a.out:
+        a.out.write_text(yaml_text, encoding="utf-8")
+    else:
+        sys.stdout.write(yaml_text)  # le YAML seul sur stdout, les constats sur stderr
+    findings: list[Finding] = []
+    if a.policy:
+        ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
+        findings = sflow_findings(devices, load_policy(a.policy), ifmap)
+        dump = [
+            {"check": f.check, "severity": f.severity.name, "subject": f.subject, "message": f.message}
+            for f in findings
+        ]
+        sys.stderr.write(json.dumps(dump, indent=2, ensure_ascii=False) + "\n")
+    levels = {f.severity for f in findings}
+    logger.debug("_sflow: retour | {} équipement(s), {} constat(s)", len(devices), len(findings))
+    return 2 if Severity.CRIT in levels else 1 if Severity.WARN in levels else 0
+
+
 def main() -> int:
     """Lance la sous-commande demandée.
 
@@ -233,6 +260,13 @@ def main() -> int:
     sm.add_argument("--floor-ratio", type=float, default=0.05, help="plancher en fraction du débit du lien")
     sm.add_argument("--error-target", type=float, default=5.0, help="erreur cible à 95 %% (en %%)")
     sm.set_defaults(fn=_sampling)
+    sf = sub.add_parser("sflow", help="contexte sFlow par interface vers calibration.yaml (#19)")
+    sf.add_argument("--cfg", type=Path, nargs="+", required=True, help="fichiers ou dossiers de configuration")
+    sf.add_argument("--exporter", help="nom d'exporteur ElastiFlow (un seul fichier ; défaut : sysname)")
+    sf.add_argument("--policy", type=Path, help="produit les constats pour les sorties de cette politique")
+    sf.add_argument("--ifindex-map", type=Path, help="CSV exporter,ifindex,name")
+    sf.add_argument("--out", type=Path, help="fichier YAML de sortie (défaut : sortie standard)")
+    sf.set_defaults(fn=_sflow)
     a = ap.parse_args()
     return a.fn(a)
 
