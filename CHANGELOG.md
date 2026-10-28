@@ -48,6 +48,15 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 - `policy.parse_comware_acl` s'appuie sur le parser et la conversion de `comware/` (une seule implémentation
   wildcard → CIDR et ports `eq/gt/lt/neq/range`, source et destination) ; TODO remplacé par la liste de ce qui
   reste non modélisé (#11).
+- Advisor : heuristique de profil « candidat sauvegarde » pour les flux de masse inconnus du
+  catalogue (`advisor/profile.py`, #9) — débit soutenu (≥ x % de `capacity_bps` sur une suite
+  consécutive de buckets), durée (≥ 15 min par défaut), plage horaire nocturne, asymétrie
+  sortant/entrant et « peu de paquets courts » (octets par échantillon). Seuils portés par le
+  catalogue (`profile: {heuristique: sauvegarde, debit_pct, duree_min, plage_horaire, asymetrie,
+  octets_par_echantillon}`), jamais en dur ; la recommandation reste un candidat
+  « classifier » à faible confiance, jamais appliquée sans validation. `discover_unclassified`
+  remplit le profil de chaque groupe (série `bytes_timeseries` + sens entrant + capacité de la
+  sortie + début de fenêtre), avec repli silencieux si la requête échoue.
 - Extraction : noms d'interface Comware normalisés (`GE1/0/10` = `GigabitEthernet1/0/10`, `XGE`, `BAGG`, `Vlan`…)
   dans `--ifindex-map` et la détection des ports non fiables ; un nom à deux ifIndex est refusé. Palier de
   couverture relevé de 79 à 80 % (mesure 80,11 %) (#24).
@@ -60,6 +69,10 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
   match (sémantique de première correspondance), traduites en clauses `must_not` dans
   les requêtes ElastiFlow et sérialisées dans la politique ; le constat
   `acl_deny_ignored` ne reste que pour les `deny` non modélisables (#21).
+- Compléments de tests (#5) :   tests du client ElastiFlow (fenêtres, filtres, agrégations, pagination) et des contrôles
+  `dscp_plan`, `untrusted_ports`, `class_share`, `congestion`, `exit_balance`, `sampling_drift`,
+  `calibration`, `run_all` ; tests du point d'entrée (`sampling`, `compare`, `audit`).
+  Couverture mesurée : 91,14 %.
 
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
