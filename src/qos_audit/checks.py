@@ -379,7 +379,7 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
             total = sum(r["bytes"] for r in rows) or 1.0
             samples = sum(r["samples"] for r in rows)
             for cls in p.classes:
-                if cls.max_share_pct is None:
+                if cls.max_share_pct is None and cls.car_bps is None:
                     continue
                 share = 100 * sum(r["bytes"] for r in rows if r["dscp"] in cls.dscp) / total
                 sev = Severity.OK if share <= cls.max_share_pct else Severity.WARN
@@ -509,7 +509,7 @@ def check_saturation_and_overflow(
             # seuls les échantillons des buckets évaluables fondent les verdicts de débordement
             evaluable_samples = sum(samples_by_ts.get(ts, 0) for ts in evaluable)
             for cls in p.classes:
-                if cls.max_share_pct is None:
+                if cls.max_share_pct is None and cls.car_bps is None:
                     continue
                 if not _enough(evaluable_samples, p):
                     out.append(
@@ -540,7 +540,9 @@ def check_saturation_and_overflow(
                         )
                     )
                     continue
-                budget = ex.capacity_bps * cls.max_share_pct / 100
+                budget = ex.capacity_bps * cls.max_share_pct / 100 if cls.max_share_pct is not None else cls.car_bps
+                if cls.car_bps is not None and cls.max_share_pct is not None:
+                    budget = min(budget, cls.car_bps)  # le car configuré est le garant effectif
                 over: list[int] = []
                 busy: list[int] = []
                 for ts in evaluable:

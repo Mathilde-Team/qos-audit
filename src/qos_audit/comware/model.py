@@ -77,6 +77,10 @@ class Behavior:
     name: str
     remark_dscp: int | None = None
     remark_precedence: int | None = None
+    car_cir_bps: int | None = None  # ``car cir <kbps>`` : débit garanti (kbps -> bps)
+    car_pct: float | None = None  # ``car cir percent <p>`` : part de la référence
+    queue_bps: int | None = None  # ``queue bandwidth <kbps>``
+    queue_pct: float | None = None  # ``queue bandwidth percent <p>``
     other: list[str] = field(default_factory=list)
 
     @property
@@ -113,6 +117,7 @@ class InterfaceQos:
     applied: list[tuple[str, str]] = field(default_factory=list)  # (policy, inbound|outbound)
     trust: str | None = None
     priority: str | None = None
+    access_vlans: list[int] = field(default_factory=list)  # ``port access vlan <n>``
 
 
 @dataclass
@@ -130,4 +135,5 @@ class DeviceQos:
     interfaces: dict[str, InterfaceQos] = field(default_factory=dict)
     global_apps: list[tuple[str, str]] = field(default_factory=list)
     vlan_apps: list[tuple[str, str, str]] = field(default_factory=list)  # (policy, direction, vlans)
+    map_tables: dict[str, str] = field(default_factory=dict)  # ``qos map-table <nom> <type>``
     issues: list[Issue] = field(default_factory=list)

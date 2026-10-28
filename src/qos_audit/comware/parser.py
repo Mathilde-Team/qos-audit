@@ -277,6 +277,38 @@ def _parse_behavior(dev: DeviceQos, name: str, body: list[str]) -> None:
                 dev.issues.append(Issue("WARN", "dscp_unknown", name, line))
         elif t[:2] == ["remark", "ip-precedence"] and len(t) > 2 and t[2].isdigit():
             beh.remark_precedence = int(t[2])
+        elif t[:2] == ["remark", "dot1p"] and len(t) > 2:
+            dev.issues.append(
+                Issue("INFO", "remark_dot1p_non_traduit", name, f"{line} : conservé brut, non traduit en DSCP")
+            )
+            beh.other.append(line)
+        elif t[:2] == ["car", "cir"] and len(t) > 2:
+            # car cir <kbps> [cbs/pps/…] | car cir percent <p> [pir …]
+            if t[2] == "percent" and len(t) > 3:
+                try:
+                    beh.car_pct = float(t[3])
+                except ValueError:
+                    logger.warning("car percent non lu | behavior={} : {}", name, line)
+                    dev.issues.append(Issue("WARN", "car_non_lu", name, line))
+            else:
+                try:
+                    beh.car_cir_bps = int(float(t[2]) * 1000)
+                except ValueError:
+                    logger.warning("car non lu | behavior={} : {}", name, line)
+                    dev.issues.append(Issue("WARN", "car_non_lu", name, line))
+        elif t[:2] == ["queue", "bandwidth"] and len(t) > 2:
+            if len(t) > 3 and t[2] == "percent":
+                try:
+                    beh.queue_pct = float(t[3])
+                except ValueError:
+                    logger.warning("queue percent non lue | behavior={} : {}", name, line)
+                    dev.issues.append(Issue("WARN", "queue_non_lue", name, line))
+            else:
+                try:
+                    beh.queue_bps = int(float(t[2]) * 1000)
+                except ValueError:
+                    logger.warning("queue non lue | behavior={} : {}", name, line)
+                    dev.issues.append(Issue("WARN", "queue_non_lue", name, line))
         else:
             beh.other.append(line)
     dev.behaviors[name] = beh
@@ -294,6 +326,10 @@ def _parse_interface(dev: DeviceQos, name: str, body: list[str]) -> None:
             itf.trust = t[2]
         elif t[:2] == ["qos", "priority"] and len(t) > 2:
             itf.priority = t[2]
+        elif (
+            t[:3] == ["port", "access", "vlan"] and len(t) > 3 and t[3].isdigit() and int(t[3]) not in itf.access_vlans
+        ):
+            itf.access_vlans.append(int(t[3]))
     logger.debug("_parse_interface: sortie | {} politique(s) appliquée(s) sur {}", len(itf.applied), name)
 
 
@@ -335,6 +371,16 @@ def parse_device(text: str, exporter: str | None = None, source: str = "") -> De
             dev.global_apps.append((h[3], h[-1]))
         elif h[:2] == ["qos", "vlan-policy"] and len(h) >= 6:
             dev.vlan_apps.append((h[2], h[-1], " ".join(h[4:-1])))
+        elif h[:2] == ["qos", "map-table"] and len(h) > 3:
+            dev.map_tables[h[2]] = " ".join(h[3:])
+            dev.issues.append(
+                Issue(
+                    "INFO",
+                    "map_table_non_modelisee",
+                    h[2],
+                    f"map-table {' '.join(h[3:])} : réinterprétation du DSCP non modélisée",
+                )
+            )
     if exporter is None and dev.sysname:
         dev.exporter = dev.sysname
     logger.debug(
