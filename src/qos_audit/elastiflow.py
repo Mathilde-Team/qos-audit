@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from opensearchpy import OpenSearch
 
-__all__ = ["FIELDS", "ElastiflowClient", "Window", "configure_fields", "exit_filter"]
+__all__ = [
+    "COUNTER_FIELDS",
+    "DEFAULT_COUNTERS_INDEX",
+    "FIELDS",
+    "ElastiflowClient",
+    "Window",
+    "configure_counter_fields",
+    "configure_fields",
+    "exit_filter",
+]
 
 # À VÉRIFIER contre le schéma de la version ElastiFlow déployée (les noms varient selon les versions).
 FIELDS = {
@@ -22,12 +31,45 @@ FIELDS = {
     "dst_ip": "destination.ip",
     "src_port": "source.port",
     "dst_port": "destination.port",
+    "ip_proto": "network.iana_number",  # numéro de protocole IP (47 GRE, 50 ESP) — À VÉRIFIER
     "bytes": "network.bytes",
     "packets": "network.packets",
     "sampling": "flow.sampling.interval",
 }
 
+# Compteurs d'interface (counter samples sFlow) : à VÉRIFIER contre le schéma de la version ElastiFlow déployée
+# (valeurs relevées sur les index patterns « telemetry » publiés par ElastiFlow ; netif.* en schéma ECS).
+COUNTER_FIELDS = {
+    "exporter": "flow.export.host.name",
+    "ifindex": "netif.index",
+    "bytes_in": "netif.bytes.in",
+    "bytes_out": "netif.bytes.out",
+}
+
+# Counter samples sFlow. Renommé « elastiflow-telemetry_flow-* » en ElastiFlow 6.2 (avant : « elastiflow-telemetry-* »,
+# ce qui attrapait aussi la télémétrie SNMP) ; surchargé par la calibration.
+DEFAULT_COUNTERS_INDEX = "elastiflow-telemetry_flow-*"
+
 _UNITS = {"s": 1, "m": 60, "h": 3600}
+
+
+def configure_counter_fields(overrides: dict[str, str]) -> None:
+    """Surcharge les noms de champs de compteurs (relevés en phase 0, P4) sans changer le dictionnaire de référence.
+
+    Args:
+        overrides: ``{clé logique: nom de champ ElastiFlow}``.
+
+    Raises:
+        ValueError: Si une clé logique est inconnue.
+    """
+    logger.debug("configure_counter_fields: entrée | {} surcharges", len(overrides))
+    unknown = set(overrides) - set(COUNTER_FIELDS)
+    if unknown:
+        msg = f"Clés de champ de compteurs inconnues : {sorted(unknown)}"
+        logger.debug("configure_counter_fields: sortie (clés inconnues) | {}", sorted(unknown))
+        raise ValueError(msg)
+    COUNTER_FIELDS.update(overrides)
+    logger.debug("configure_counter_fields: sortie | {} champs", len(COUNTER_FIELDS))
 
 
 def configure_fields(overrides: dict[str, str]) -> None:
@@ -39,11 +81,14 @@ def configure_fields(overrides: dict[str, str]) -> None:
     Raises:
         ValueError: Si une clé logique est inconnue.
     """
+    logger.debug("configure_fields: entrée | {} surcharges", len(overrides))
     unknown = set(overrides) - set(FIELDS)
     if unknown:
         msg = f"Clés de champ inconnues : {sorted(unknown)}"
+        logger.debug("configure_fields: sortie (clés inconnues) | {}", sorted(unknown))
         raise ValueError(msg)
     FIELDS.update(overrides)
+    logger.debug("configure_fields: sortie | {} champs", len(FIELDS))
 
 
 @dataclass(frozen=True)
@@ -57,6 +102,9 @@ class Window:
     @property
     def bucket_seconds(self) -> int:
         """Durée d'un bucket en secondes (formats ``30s``, ``1m``, ``1h``)."""
+        logger.debug(
+            "Window.bucket_seconds: sortie | {} -> {} s", self.bucket, int(self.bucket[:-1]) * _UNITS[self.bucket[-1]]
+        )
         return int(self.bucket[:-1]) * _UNITS[self.bucket[-1]]
 
 
@@ -71,7 +119,9 @@ def exit_filter(exporter: str, ifindex: int, direction: str) -> dict:
     Returns:
         Clause ``bool.filter``.
     """
+    logger.debug("exit_filter: entrée | {} ifindex={} sens={}", exporter, ifindex, direction)
     if_field = FIELDS["out_if"] if direction == "egress" else FIELDS["in_if"]
+    logger.debug("exit_filter: sortie | filtre sur {}", if_field)
     return {"bool": {"filter": [{"term": {FIELDS["exporter"]: exporter}}, {"term": {if_field: ifindex}}]}}
 
 
@@ -84,6 +134,7 @@ class ElastiflowClient:
         index: str = "elastiflow-flow-*",
         scale_by_sampling: bool = True,
         bytes_overhead_per_packet: int = 0,
+        counters_index: str | None = None,
     ) -> None:
         """Initialise le client.
 
@@ -94,24 +145,36 @@ class ElastiflowClient:
                 (résultat de la phase 0, P6 : à ne pas laisser au hasard).
             bytes_overhead_per_packet: Octets à retrancher par paquet pour passer de la base trame à la base IP
                 (14 si ElastiFlow additionne des octets de trame ; résultat de la phase 0, P5).
+            counters_index: Pattern d'index des counter samples sFlow (défaut : ``DEFAULT_COUNTERS_INDEX``).
         """
         self._os = OpenSearch(hosts=hosts)
         self._index = index
+        self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
         self._scale = scale_by_sampling
         self._overhead = bytes_overhead_per_packet
+        logger.debug(
+            "ElastiflowClient.__init__: sortie | index={} compteurs={} échelle={} overhead={}",
+            self._index,
+            self._counters_index,
+            self._scale,
+            self._overhead,
+        )
 
     def _query(self, w: Window, extra_filter: dict | None) -> dict:
         rng = {"range": {"@timestamp": {"gte": w.start.isoformat(), "lt": w.end.isoformat()}}}
+        logger.debug("_query: sortie | filtre={} +{}", "@timestamp", "extra" if extra_filter else "aucun")
         return {"bool": {"filter": [rng] + ([extra_filter] if extra_filter else [])}}
 
     def _bytes_agg(self) -> dict:
         if not self._scale and not self._overhead:
+            logger.debug("_bytes_agg: sortie | somme directe")
             return {"sum": {"field": FIELDS["bytes"]}}
         expr = f"doc['{FIELDS['bytes']}'].value"
         if self._overhead:
             expr = f"({expr} - {self._overhead} * doc['{FIELDS['packets']}'].value)"
         if self._scale:
             expr += f" * Math.max(1, doc['{FIELDS['sampling']}'].value)"
+        logger.debug("_bytes_agg: sortie | script")
         return {"sum": {"script": {"source": expr}}}
 
     def bytes_by(
@@ -129,6 +192,7 @@ class ElastiflowClient:
         Returns:
             Lignes ``{<clé>: valeur, "bytes": float, "samples": int}``.
         """
+        logger.debug("bytes_by: entrée | group_by={} max_pages={}", group_by, max_pages)
         sources = [{k: {"terms": {"field": FIELDS[k]}}} for k in group_by]
         rows: list[dict] = []
         after: dict | None = None
@@ -145,8 +209,10 @@ class ElastiflowClient:
             rows += [{**b["key"], "bytes": b["b"]["value"], "samples": b["doc_count"]} for b in agg["buckets"]]
             after = agg.get("after_key")
             if not after or not agg["buckets"]:
+                logger.debug("bytes_by: sortie (pagination terminée) | {} ligne(s)", len(rows))
                 return rows
         logger.warning("Pagination tronquée après {} pages (group_by={})", max_pages, group_by)
+        logger.debug("bytes_by: sortie (tronquée) | {} ligne(s)", len(rows))
         return rows
 
     def bytes_timeseries(self, w: Window, extra_filter: dict | None = None) -> list[dict]:
@@ -159,6 +225,7 @@ class ElastiflowClient:
         Returns:
             Lignes ``{"ts": str, "dscp": int, "bytes": float, "samples": int}``.
         """
+        logger.debug("bytes_timeseries: entrée | bucket={}", w.bucket)
         body = {
             "size": 0,
             "query": self._query(w, extra_filter),
@@ -170,8 +237,78 @@ class ElastiflowClient:
             },
         }
         res = self._os.search(index=self._index, body=body)["aggregations"]["t"]["buckets"]
+        logger.debug("bytes_timeseries: sortie | {} bucket(s)", len(res))
         return [
             {"ts": t["key_as_string"], "dscp": int(d["key"]), "bytes": d["b"]["value"], "samples": d["doc_count"]}
             for t in res
             for d in t["d"]["buckets"]
         ]
+
+    def counter_samples(self, exporter: str, ifindex: int, w: Window, before_s: int = 90) -> list[dict]:
+        """Relevés de compteurs d'interface (counter samples sFlow) triés par horodatage croissant.
+
+        Les compteurs sont cumulés : le débit se calcule par différence entre relevés consécutifs
+        (cf. ``counters.rates_from_counters``). Un relevé avant le début de la fenêtre est inclus
+        (``before_s`` secondes de marge) pour couvrir le premier bucket.
+
+        Args:
+            exporter: Nom de l'équipement exporteur.
+            ifindex: ifIndex de l'interface.
+            w: Fenêtre d'analyse.
+            before_s: Marge avant le début de la fenêtre pour attraper le relevé précédent.
+
+        Returns:
+            Lignes ``{"ts": datetime, "in": octets entrants, "out": octets sortants}`` (valeurs ``None`` si absentes).
+        """
+        logger.debug(
+            "counter_samples : exporter={} ifindex={} fenêtre=[{}, {}]",
+            exporter,
+            ifindex,
+            w.start,
+            w.end,
+        )
+        start = w.start - timedelta(seconds=before_s)
+        body = {
+            "size": 10000,
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": start.isoformat(), "lt": w.end.isoformat()}}},
+                        {"term": {COUNTER_FIELDS["exporter"]: exporter}},
+                        {"term": {COUNTER_FIELDS["ifindex"]: ifindex}},
+                    ]
+                }
+            },
+            # docvalue_fields : insensible à la structure de _source (clés à points ou champs imbriqués)
+            "docvalue_fields": [
+                {"field": "@timestamp", "format": "epoch_millis"},
+                COUNTER_FIELDS["bytes_in"],
+                COUNTER_FIELDS["bytes_out"],
+            ],
+            "sort": [{"@timestamp": "asc"}],
+        }
+        rows: list[dict] = []
+        try:
+            hits = self._os.search(index=self._counters_index, body=body)["hits"]["hits"]
+        except Exception as exc:  # toute erreur d'accès remonte à l'appelant, qui repliera sur les flux
+            logger.warning("Requête de compteurs échouée pour {}:if{} : {}", exporter, ifindex, exc)
+            raise
+        if len(hits) >= 10000:
+            logger.warning("Compteurs de {}:if{} tronqués à 10000 relevés : réduire la fenêtre", exporter, ifindex)
+        for hit in hits:
+            fields = hit.get("fields", {})
+            ts_ms = fields.get("@timestamp", [None])[0]
+            bi = fields.get(COUNTER_FIELDS["bytes_in"], [None])[0]
+            bo = fields.get(COUNTER_FIELDS["bytes_out"], [None])[0]
+            if ts_ms is None or (bi is None and bo is None):
+                continue
+            rows.append(
+                {
+                    # epoch_millis peut arriver en nombre ou en chaîne : passer par float()
+                    "ts": datetime.fromtimestamp(float(ts_ms) / 1000, tz=UTC),
+                    "in": bi,
+                    "out": bo,
+                }
+            )
+        logger.debug("counter_samples : {} relevés pour {}:if{}", len(rows), exporter, ifindex)
+        return rows
