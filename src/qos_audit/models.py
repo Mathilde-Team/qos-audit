@@ -37,6 +37,7 @@ def rel_error_pct(samples: int, margin: float = 1.0) -> float:
     Returns:
         Erreur relative en pourcentage (``inf`` si aucun échantillon).
     """
+    logger.debug("rel_error_pct: entrée | n={} marge={}", samples, margin)
     err = 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
     logger.debug("rel_error_pct: retour | n={} -> {:.1f} %", samples, err)
     return err
@@ -142,7 +143,9 @@ class Policy:
 
     def all_dscp(self) -> frozenset[int]:
         """Ensemble des DSCP prévus par le plan."""
-        return frozenset(d for c in self.classes for d in c.dscp)
+        values = frozenset(d for c in self.classes for d in c.dscp)
+        logger.debug("Policy.all_dscp: sortie | {} valeur(s)", len(values))
+        return values
 
 
 @dataclass

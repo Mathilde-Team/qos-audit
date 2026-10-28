@@ -85,6 +85,7 @@ def split_blocks(text: str) -> list[tuple[str, list[str]]]:
 
 
 def _port(token: str) -> int | None:
+    logger.debug("_port: entrée | {}", token)
     if token.isdigit():
         logger.debug("_port: sortie (numérique) | {}", token)
         return int(token)

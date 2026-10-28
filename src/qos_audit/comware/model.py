@@ -58,7 +58,9 @@ class Acl:
     @property
     def label(self) -> str:
         """Identifiant lisible."""
-        return f"{self.kind} {self.name or self.number}"
+        lbl = f"{self.kind} {self.name or self.number}"
+        logger.debug("Acl.label: sortie | {}", lbl)
+        return lbl
 
 
 @dataclass
@@ -86,10 +88,12 @@ class Behavior:
     @property
     def dscp(self) -> int | None:
         """DSCP imposé (``remark dscp`` ou ``remark ip-precedence`` converti)."""
+        logger.debug("Behavior.dscp: entrée | remark_dscp={}", self.remark_dscp)
         if self.remark_dscp is not None:
+            logger.debug("Behavior.dscp: sortie | {}", self.remark_dscp)
             return self.remark_dscp
         value = None if self.remark_precedence is None else self.remark_precedence * 8
-        logger.debug("Behavior.dscp: {} -> {}", self.name, value)
+        logger.debug("Behavior.dscp: sortie | {} -> {}", self.name, value)
         return value
 
 

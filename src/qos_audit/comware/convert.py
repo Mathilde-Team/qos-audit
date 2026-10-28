@@ -44,6 +44,7 @@ def dscp_name(value: int) -> str:
 
 def normalize_protocol(token: str | None) -> str | None:
     """Nom de protocole tel que le fournit ElastiFlow ; ``ip`` signifie tous les protocoles (None)."""
+    logger.debug("normalize_protocol: entrée | {}", token)
     if token is None or token.lower() == "ip":
         logger.debug("normalize_protocol: retour | {} -> tous protocoles", token)
         return None
@@ -61,6 +62,7 @@ def wildcard_to_cidr(addr: str, wildcard: str) -> str | None:
     Returns:
         CIDR, ``None`` pour « any » (wildcard 255.255.255.255), ou ``"?"`` si le wildcard n'est pas contigu.
     """
+    logger.debug("wildcard_to_cidr: entrée | {} {}", addr, wildcard)
     wild = int(ipaddress.IPv4Address(wildcard)) if "." in wildcard else int(wildcard)
     if wild == 0xFFFFFFFF:
         logger.debug("wildcard_to_cidr: retour | any ({} {})", addr, wildcard)
