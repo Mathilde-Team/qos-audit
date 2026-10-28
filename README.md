@@ -26,6 +26,14 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
                      --calibration calibrations/calibration.example.yaml --opensearch http://es:9200
     qos-audit compare avant.json apres.json
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --ifindex-map configs/ifindex.csv --out qos_extract/
+    # une politique par site (policy.<site>.yaml), puis audit de chaque site avec sa politique
+    qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
+    qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 [--site site-a]
+    # drops par file en SSH Comware (issue #10) : « uv sync --extra comware », identifiants par
+    # QOS_AUDIT_SSH_USER / QOS_AUDIT_SSH_PASSWORD (jamais journalisés), CSV des sorties d'extract.
+    # Les drops ne se mesurent qu'entre deux exécutions encadrant la fenêtre (cf. docs/LIMITES.md).
+    qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 \
+                     --comware-drops etat-drops.json --comware-interfaces configs/ifindex.csv
 
 ## Avant la première exécution
 
@@ -53,5 +61,11 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 Le job CI « Qualité (lint, tests) » applique les mêmes contrôles ; le seuil de couverture (lignes et branches)
 est lu dans `pyproject.toml`.
+
+Les tests d'intégration (`tests/test_integration_opensearch.py`, #17) rejouent les requêtes du client ElastiFlow
+contre un vrai OpenSearch ; ils sont exclus de `make test` et tournent dans le job CI « Intégration OpenSearch »
+(non bloquant). En local, avec un OpenSearch sans sécurité sur le port 9200 :
+
+    OPENSEARCH_URL=http://localhost:9200 uv run pytest -m integration tests/test_integration_opensearch.py
 
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.

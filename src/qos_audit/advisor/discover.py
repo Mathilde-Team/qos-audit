@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from loguru import logger
+
 from qos_audit.checks import _exits
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import Policy
-
-from loguru import logger
 
 __all__ = ["FlowCluster", "discover_unclassified"]
 

@@ -12,10 +12,21 @@ from datetime import date, datetime
 
 from loguru import logger
 
-from qos_audit.calibration import Calibration
+from qos_audit.calibration import Calibration, ExporterCal, Validation
 from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
-from qos_audit.models import Direction, Exit, Finding, FlowMatch, Policy, Severity, Site, rel_error_pct
+from qos_audit.models import (
+    Direction,
+    Exit,
+    Finding,
+    FlowMatch,
+    Policy,
+    QosClass,
+    Severity,
+    Site,
+    rel_error_pct,
+    wide_port_range,
+)
 from qos_audit.sampling import (
     expected_error_pct,
     params_from_thresholds,
@@ -26,6 +37,7 @@ from qos_audit.sampling import (
 __all__ = [
     "check_calibration",
     "check_counter_consistency",
+    "check_encapsulated_traffic",
     "match_filter",
     "run_all",
 ]
@@ -34,7 +46,11 @@ _DIRS = (Direction.EGRESS.value, Direction.INGRESS.value)
 
 
 def match_filter(m: FlowMatch) -> dict:
-    """Traduit un FlowMatch (ACL théorique) en filtre OpenSearch."""
+    """Traduit un FlowMatch (ACL théorique) en filtre OpenSearch.
+
+    Les exclusions (``deny`` précédents, issue #21) deviennent des clauses
+    ``must_not`` : le trafic rejeté par l'ACL ne compte pas dans le match.
+    """
     f: list[dict] = []
     if m.protocol:
         f.append({"term": {FIELDS["proto"]: m.protocol}})
@@ -46,7 +62,10 @@ def match_filter(m: FlowMatch) -> dict:
         f.append({"range": {FIELDS["dst_port"]: {"gte": m.dst_ports[0], "lte": m.dst_ports[1]}}})
     if m.src_ports:
         f.append({"range": {FIELDS["src_port"]: {"gte": m.src_ports[0], "lte": m.src_ports[1]}}})
-    return {"bool": {"filter": f}}
+    body: dict = {"filter": f}
+    if m.excludes:
+        body["must_not"] = [match_filter(e) for e in m.excludes]
+    return {"bool": body}
 
 
 def _and(*clauses: dict) -> dict:
@@ -218,6 +237,109 @@ def check_dscp_plan(c: ElastiflowClient, p: Policy, w: Window, only_site: str | 
                     evidence={"unknown": unknown},
                 )
             )
+    return out
+
+
+_VOICE_DSCP = 46
+
+
+def _size_filter(op: str, max_bytes: float) -> dict:
+    """Filtre sur la taille moyenne des paquets d'un enregistrement (octets / paquets).
+
+    Un enregistrement sFlow porte un paquet échantillonné : sa taille moyenne est celle du paquet.
+    """
+    logger.debug("_size_filter: entrée | {} {}", op, max_bytes)
+    expr = f"doc['{FIELDS['bytes']}'].value {op} params.t * doc['{FIELDS['packets']}'].value"
+    clause = {"script": {"script": {"source": expr, "params": {"t": max_bytes}}}}
+    logger.debug("_size_filter: sortie | {}", expr)
+    return clause
+
+
+def _voice_range_finding(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    target: tuple[Site, Exit, QosClass],
+    m: FlowMatch,
+    plage: tuple[int, int],
+) -> Finding:
+    """Part non voix du trafic d'une classe voix matché par une plage large, sur une sortie (#32)."""
+    logger.debug("_voice_range_finding: entrée | {} {}", m, plage)
+    site, ex, cls = target
+    th = p.thresholds
+    span = f"{m.protocol or 'ip'} {plage[0]}-{plage[1]}"
+    subject = f"{site.name}/{ex.name}/{cls.name}"
+    base = _and(
+        exit_filter(ex.exporter, ex.ifindex, Direction.EGRESS.value),
+        match_filter(m),
+        {"terms": {FIELDS["dscp"]: sorted(cls.dscp)}},
+    )
+    rows = c.bytes_by(w, ["dscp"], base)
+    samples = sum(r["samples"] for r in rows)
+    if not _enough(samples, p):
+        logger.debug("_voice_range_finding: sortie | {} échantillons, non concluant", samples)
+        return _finding(
+            p, "port_range", Severity.INCONCLUSIVE, subject, f"plage {span} : {samples} échantillons, insuffisant",
+            site=site, direction="egress", samples=samples,
+        )  # fmt: skip
+    limit = th["voice_max_packet_bytes"]
+    total = sum(r["bytes"] for r in rows)
+    big = sum(r["bytes"] for r in c.bytes_by(w, ["dscp"], _and(base, _size_filter(">", limit))))
+    pct = 100 * big / total if total else 0.0
+    ip_key = "dst_ip" if m.dst_ports == plage else "src_ip"
+    voice = c.bytes_by(w, [ip_key], _and(base, _size_filter("<=", limit)))
+    top = [str(r[ip_key]) for r in sorted(voice, key=lambda r: -r["bytes"]) if r.get(ip_key)][:5]
+    reco = f"restreindre la classe aux IP des IPBX / passerelles ({', '.join(top) or 'aucune IP voix vue'})"
+    sev = Severity.WARN if pct > th["port_range_non_voice_max_pct"] else Severity.OK
+    msg = (
+        f"plage {span} sans IP : {pct:.1f} % des octets {cls.name} en paquets > {limit:.0f} o (pas de la voix) ; {reco}"
+    )
+    finding = _finding(
+        p, "port_range", sev, subject, msg, site=site, direction="egress", samples=samples,
+        evidence={"match": str(m), "non_voice_pct": pct, "voice_ips": top, "ip_field": ip_key},
+    )  # fmt: skip
+    logger.debug("_voice_range_finding: sortie | {:.1f} % non voix", pct)
+    return finding
+
+
+def check_port_ranges(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """ACL par plages de ports trop larges, sans restriction d'IP (#32).
+
+    Une plage RTP attrape aussi des ports éphémères. Pour une classe voix (DSCP 46), on mesure par sortie
+    la part de ses octets, matchés par la plage, portée par des paquets plus grands qu'un paquet voix, et
+    l'on propose les IP vues dans le trafic voix (IPBX, passerelles) pour restreindre la classe. Pour une
+    autre classe, la plage est signalée sans mesure.
+
+    Args:
+        c: Client ElastiFlow.
+        p: Politique théorique.
+        w: Fenêtre d'analyse.
+        only_site: Restreint aux sorties d'un site.
+
+    Returns:
+        Constats ``port_range`` (aucun si aucune plage large).
+    """
+    logger.debug("check_port_ranges: entrée | {} classe(s)", len(p.classes))
+    max_ports = int(p.thresholds["port_range_max_ports"])
+    out: list[Finding] = []
+    for cls in p.classes:
+        for m in cls.match:
+            plage = wide_port_range(m, max_ports)
+            if plage is None:
+                continue
+            if _VOICE_DSCP in cls.dscp:
+                out += [_voice_range_finding(c, p, w, (s, ex, cls), m, plage) for s, ex in _exits(p, only_site)]
+                continue
+            n = plage[1] - plage[0] + 1
+            out.append(
+                _finding(
+                    p, "port_range", Severity.WARN, cls.name,
+                    f"plage {m.protocol or 'ip'} {plage[0]}-{plage[1]} ({n} ports) sans IP : attrape aussi des "
+                    "ports éphémères, restreindre aux IP des serveurs",
+                    evidence={"match": str(m)},
+                )
+            )  # fmt: skip
+    logger.debug("check_port_ranges: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -490,20 +612,26 @@ def check_congestion(
         except NotImplementedError:
             logger.debug("Source de compteurs non implémentée pour {}", ex.exporter)
             continue
-        if drops:
-            lost = sum(drops.values())
-            out.append(
-                _finding(
-                    p,
-                    "congestion_drops",
-                    Severity.CRIT if lost else Severity.OK,
-                    f"{site.name}/{ex.name}",
-                    f"{lost} paquets droppés",
-                    site=site,
-                    direction="egress",
-                    evidence=drops,
-                )
+        if drops is None:
+            continue
+        lost = sum(drops.par_file.values())
+        out.append(
+            _finding(
+                p,
+                "congestion_drops",
+                Severity.CRIT if lost else Severity.OK,
+                f"{site.name}/{ex.name}",
+                f"{lost} paquets droppés entre {drops.depuis:%d/%m %H:%M} et "
+                f"{drops.jusqu_a:%d/%m %H:%M} UTC (intervalle d'observation contenant la fenêtre)",
+                site=site,
+                direction="egress",
+                evidence={
+                    "par_file": drops.par_file,
+                    "depuis": drops.depuis.isoformat(),
+                    "jusqu_a": drops.jusqu_a.isoformat(),
+                },
             )
+        )
     return out
 
 
@@ -644,6 +772,214 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
     return out
 
 
+# Signatures d'encapsulation (issue #30) : après IPsec, GRE ou SD-WAN, seul l'en-tête externe et son
+# DSCP sont visibles. Est « encapsulé » : GRE/ESP (protocoles IP 47 et 50), IKE 500 et NAT-T 4500
+# (établissement IPsec, cf. docs constructeurs : https://documentation.extremenetworks.com/SD-WAN/latest/
+# ExtremeCloud_SD-WAN_Online_Help/Content/network/Prerequisites.htm et https://www.cisco.com/c/en/us/
+# solutions/collateral/enterprise-networks/sd-wan/sd-wan-remote-access-wp.html), et les ports UDP
+# SD-WAN documentés : Cisco Catalyst/Viptela 12346 (base, sauts 12366/12386/12406/12426 — Design
+# Guide Cisco SD-WAN : https://www.cisco.com/c/en/us/td/docs/solutions/CVD/SDWAN/cisco-sd-wan-design-guide.html),
+# VMware VeloCloud VCMP 2426 (https://www.dell.com/support/manuals/en-us/sd-wan-edge-3000/edge3400-aag/
+# dell-emc-sd-wan-edge-3400-installation-considerations), Silver Peak tunnel UDP 4163
+# (https://www.silver-peak.com/sites/default/files/userdocs/speak_ports_used_july2015.pdf).
+TUNNEL_IP_PROTOS = (47, 50)
+TUNNEL_UDP_PORTS = (500, 4500, 2426, 4163, 12346, 12366, 12386, 12406, 12426)
+
+
+def _tunnel_ports_clause() -> dict:
+    """Clause « UDP sur un port de tunnel/SD-WAN » (source ou destination)."""
+    logger.debug("_tunnel_ports_clause: entrée")
+    clause = {
+        "bool": {
+            "should": [
+                {"terms": {FIELDS["dst_port"]: list(TUNNEL_UDP_PORTS)}},
+                {"terms": {FIELDS["src_port"]: list(TUNNEL_UDP_PORTS)}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+    logger.debug("_tunnel_ports_clause: sortie")
+    return clause
+
+
+def _tunnel_filter(base: dict) -> dict:
+    """Filtre « trafic encapsulé » : protocole IP GRE/ESP, ou UDP sur un port de tunnel/SD-WAN."""
+    logger.debug("_tunnel_filter: entrée")
+    filtre = _and(
+        base,
+        {
+            "bool": {
+                "should": [
+                    {"terms": {FIELDS["ip_proto"]: list(TUNNEL_IP_PROTOS)}},
+                    _and({"term": {FIELDS["proto"]: "udp"}}, _tunnel_ports_clause()),
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+    )
+    logger.debug("_tunnel_filter: sortie")
+    return filtre
+
+
+def check_encapsulated_traffic(
+    c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None
+) -> list[Finding]:
+    """Part du trafic encapsulé (IPsec, GRE, SD-WAN) par sortie et sens, et DSCP externe (issue #30).
+
+    Au-delà de ``encapsulated_inconclusive_pct`` (majorité par défaut), l'audit de classes n'est
+    pas concluant : mesurer avant le tunnel. Total et trafic tunnel sont mesurés par la même
+    agrégation sur le DSCP (toujours présent) : les enregistrements sans ce champ ne faussent
+    ni l'un ni l'autre. La signature GRE/ESP (protocole IP) reste la partie la moins certaine —
+    un champ ``ip_proto`` absent sous-estime le trafic tunnel, donc la part, sans inventer de
+    verdict. Le DSCP externe du trafic encapsulé est une observation : la copie du DSCP interne
+    (classification avant encapsulation, marquage statique) ne se vérifie pas de l'extérieur,
+    le constat reste non concluant avec sa consigne de vérification.
+    """
+    logger.debug("check_encapsulated_traffic: entrée")
+    out: list[Finding] = []
+    th = p.thresholds
+    for site, ex in _exits(p, only_site):
+        for d in _DIRS:
+            base = exit_filter(ex.exporter, ex.ifindex, d)
+            rows = c.bytes_by(w, ["dscp"], base)
+            total_bytes = sum(r["bytes"] for r in rows)
+            samples = sum(r["samples"] for r in rows)
+            subject = f"{site.name}/{ex.name}"
+            if not samples:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        "aucun enregistrement : exporteur muet ou champs à vérifier",
+                        site=site,
+                        direction=d,
+                    )
+                )
+                continue
+            if not _enough(samples, p):
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        f"trop peu d'échantillons ({samples}) pour juger la part encapsulée",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                    )
+                )
+                continue
+            tunnel_rows = c.bytes_by(w, ["dscp"], _tunnel_filter(base))
+            tunnel_bytes = sum(r["bytes"] for r in tunnel_rows)
+            share = 100.0 * tunnel_bytes / total_bytes if total_bytes else 0.0
+            evidence = {
+                "tunnel_bytes": tunnel_bytes,
+                "total_bytes": total_bytes,
+                "share_pct": round(share, 2),
+            }
+            if share > th["encapsulated_inconclusive_pct"]:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        f"{share:.1f}% du trafic est encapsulé (IPsec/GRE/SD-WAN) : "
+                        "audit de classes non concluant, mesurer avant le tunnel",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence=evidence,
+                    )
+                )
+            else:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.OK,
+                        subject,
+                        f"{share:.1f}% du trafic est encapsulé (IPsec/GRE/SD-WAN)",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence=evidence,
+                    )
+                )
+            out += _constat_dscp_tunnel(c, p, w, base, subject, site, d, tunnel_rows, tunnel_bytes)
+    logger.debug("check_encapsulated_traffic: sortie | {} constat(s)", len(out))
+    return out
+
+
+def _constat_dscp_tunnel(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    base: dict,
+    subject: str,
+    site: Site,
+    direction: str,
+    tunnel_rows: list[dict],
+    tunnel_bytes: float,
+) -> list[Finding]:
+    """DSCP externe du trafic encapsulé : observation, jamais un verdict sur la copie interne.
+
+    La copie du DSCP interne (classification avant encapsulation — ``pre-classify`` chez
+    Cisco —, recopie ou marquage statique de l'en-tête externe) ne se prouve pas depuis
+    l'en-tête externe : un DSCP par défaut peut être la copie correcte d'un trafic best
+    effort interne, un DSCP marqué un marquage statique du tunnel. Le constat reste donc
+    INCONCLUSIVE et porte la répartition observée avec la consigne de vérification.
+    """
+    logger.debug("_constat_dscp_tunnel: entrée")
+    if tunnel_bytes <= 0:
+        logger.debug("_constat_dscp_tunnel: sortie | rien à observer (pas de trafic encapsulé)")
+        return []
+    tunnel_samples = sum(r["samples"] for r in tunnel_rows)
+    if not _enough(tunnel_samples, p):
+        logger.debug("_constat_dscp_tunnel: sortie | non concluant (échantillons)")
+        return [
+            _finding(
+                p,
+                "encapsulated_dscp",
+                Severity.INCONCLUSIVE,
+                subject,
+                f"trop peu d'échantillons ({tunnel_samples}) pour observer le DSCP du trafic encapsulé",
+                site=site,
+                direction=direction,
+                samples=tunnel_samples,
+            )
+        ]
+    default_bytes = sum(r["bytes"] for r in tunnel_rows if int(r["dscp"]) == 0)
+    default_share = 100.0 * default_bytes / tunnel_bytes
+    msg = (
+        f"DSCP externe du trafic encapsulé : {default_share:.1f}% par défaut, "
+        f"{100 - default_share:.1f}% marqué — copie du DSCP interne non vérifiable depuis "
+        "l'en-tête externe, contrôler la configuration du tunnel (classification avant "
+        "encapsulation / pre-classify, recopie ou marquage statique)"
+    )
+    logger.debug("_constat_dscp_tunnel: sortie | observation émise")
+    return [
+        _finding(
+            p,
+            "encapsulated_dscp",
+            Severity.INCONCLUSIVE,
+            subject,
+            msg,
+            site=site,
+            direction=direction,
+            samples=tunnel_samples,
+            evidence={
+                "default_dscp_share_pct": round(default_share, 2),
+                "marked_dscp_share_pct": round(100 - default_share, 2),
+                "tunnel_bytes": tunnel_bytes,
+            },
+        )
+    ]
+
+
 def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Sampling observé vs sampling recommandé pour la capacité de la sortie (précision et coût).
 
@@ -733,8 +1069,98 @@ def check_sampling_drift(c: ElastiflowClient, p: Policy, w: Window, cal: Calibra
     return out
 
 
+_ALLEGEE = "revalidation allégée (P4 à P7 et A2)"
+_COMPLETE = "revalidation complète"
+
+
+def _rates(e: ExporterCal) -> set[int]:
+    """Sampling-rates configurés sur les interfaces d'un exporteur."""
+    return {i.sampling_rate for i in e.interfaces if i.sampling_rate is not None}
+
+
+def _scope_drift(e: ExporterCal, v: Validation, cal: Calibration) -> list[str]:
+    """Écarts entre l'état déployé d'un exporteur et un périmètre validé (protocole §10.4).
+
+    Args:
+        e: Exporteur tel que déployé.
+        v: Périmètre validé (le sien, ou celui de l'exporteur qui le couvre).
+        cal: Calibration (version d'ElastiFlow déployée).
+
+    Returns:
+        Messages, revalidation à prévoir comprise ; vide si l'exporteur est couvert.
+    """
+    logger.debug("_scope_drift: entrée | {}", e.name)
+    out: list[str] = []
+    if e.model != v.model:
+        out.append(f"modèle {e.model or '?'} ≠ modèle validé {v.model or '?'} : {_COMPLETE}")
+    if e.comware_version != v.comware_version:
+        out.append(
+            f"firmware {v.comware_version or '?'} → {e.comware_version or '?'} depuis la validation : {_ALLEGEE}"
+        )
+    if cal.elastiflow_version != v.elastiflow_version:
+        out.append(
+            f"ElastiFlow {v.elastiflow_version or '?'} → {cal.elastiflow_version or '?'} depuis la validation : {_ALLEGEE}"
+        )
+    if e.sampling_direction != v.sampling_direction:
+        out.append(f"sens d'échantillonnage {v.sampling_direction} → {e.sampling_direction} : {_ALLEGEE}")
+    nouveaux = sorted(_rates(e) - set(v.sampling_rates))
+    if v.sampling_rates and nouveaux:
+        out.append(f"sampling 1:{', 1:'.join(map(str, nouveaux))} non validé : {_ALLEGEE}")
+    logger.debug("_scope_drift: sortie | {} écart(s)", len(out))
+    return out
+
+
+def _covering(e: ExporterCal, cal: Calibration) -> ExporterCal | None:
+    """Exporteur validé qui couvre ``e`` : même modèle et version, configuré à l'identique (§10.4)."""
+    logger.debug("_covering: entrée | {}", e.name)
+    for other in sorted(cal.exporters.values(), key=lambda x: x.name):
+        v = other.validation
+        if other.name != e.name and v is not None and v.validated_on is not None and not _scope_drift(e, v, cal):
+            logger.debug("_covering: sortie | {} couvert par {}", e.name, other.name)
+            return other
+    logger.debug("_covering: sortie | {} non couvert", e.name)
+    return None
+
+
+def _exporter_scope(e: ExporterCal, cal: Calibration, today: date, max_age_days: int) -> list[str]:
+    """Messages WARN du périmètre validé d'un exporteur (vide : couvert et à jour)."""
+    logger.debug("_exporter_scope: entrée | {}", e.name)
+    v = e.validation
+    if v is None:
+        other = _covering(e, cal)
+        out = (
+            [] if other else [f"aucun périmètre validé (modèle {e.model or '?'}, firmware {e.comware_version or '?'})"]
+        )
+        logger.debug("_exporter_scope: sortie | {} sans bloc, {} message(s)", e.name, len(out))
+        return out
+    if v.validated_on is None:
+        logger.debug("_exporter_scope: sortie | {} jamais validé", e.name)
+        return ["périmètre renseigné mais jamais validé (date absente)"]
+    out = _scope_drift(e, v, cal)
+    age = (today - v.validated_on).days
+    if age > max_age_days:
+        out.append(f"validé il y a {age} jours : {_ALLEGEE}")
+    logger.debug("_exporter_scope: sortie | {} {} message(s)", e.name, len(out))
+    return out
+
+
 def check_calibration(p: Policy, cal: Calibration, today: date | None = None) -> list[Finding]:
-    """Santé de l'instrument : la validation d'ElastiFlow est-elle faite, complète et récente ?"""
+    """Santé de l'instrument : la validation d'ElastiFlow est-elle faite, complète et récente ?
+
+    Le périmètre validé est contrôlé exporteur par exporteur (issue #35) : un exporteur sans validation
+    propre doit être couvert par un exporteur validé de même modèle et version, configuré à l'identique ;
+    une mise à jour du firmware ou d'ElastiFlow depuis la validation, ou une validation trop ancienne,
+    passent en WARN avec la revalidation à prévoir.
+
+    Args:
+        p: Politique (exporteurs utilisés et seuils).
+        cal: Calibration.
+        today: Date du jour (tests).
+
+    Returns:
+        Constats WARN, ou un constat OK unique.
+    """
+    logger.debug("check_calibration: entrée | {} exporteur(s) calibré(s)", len(cal.exporters))
     today = today or date.today()
     th = p.thresholds
     out: list[Finding] = []
@@ -757,7 +1183,11 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
             add(name, "échantillonnage entrée+sortie : double comptage possible, non traité")
         if e.counter_interval_s > 60:
             add(name, f"intervalle de compteurs {e.counter_interval_s} s (30 s recommandé)")
-    return out or [_finding(p, "calibration", Severity.OK, "elastiflow", "calibration validée et à jour")]
+        for msg in _exporter_scope(e, cal, today, th["calibration_max_age_days"]):
+            add(name, msg)
+    result = out or [_finding(p, "calibration", Severity.OK, "elastiflow", "calibration validée et à jour")]
+    logger.debug("check_calibration: sortie | {} constat(s)", len(result))
+    return result
 
 
 def run_all(
@@ -787,10 +1217,12 @@ def run_all(
     findings += check_dscp_plan(c, p, w, only_site)
     findings += check_untrusted_ports(c, p, w)
     findings += check_class_share(c, p, w, only_site)
+    findings += check_port_ranges(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
     findings += check_congestion(c, p, w, counters, only_site)
     findings += check_exit_balance(c, p, w, only_site)
+    findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
     if cal is not None:
         findings += check_calibration(p, cal)

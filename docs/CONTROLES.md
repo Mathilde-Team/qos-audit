@@ -14,12 +14,15 @@ Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur re
 | `class_overflow` | Buckets où une classe dépasse son budget en bit/s (volume des compteurs × répartition des flux) ; lien chargé ou non. INCONCLUSIVE si la répartition par classe ne couvre pas assez de buckets | WARN | Volume exact, répartition par classe statistique |
 | `congestion_ecn` | Part d'octets marqués ECN CE | WARN | Faible : dépend de l'activation d'ECN de bout en bout |
 | `congestion_drops` | Drops par file (si `CounterSource` branchée) | CRIT | Preuve directe |
+| `port_range` | Plage de ports large (> `port_range_max_ports`) sans IP dans une classe. Classe voix (DSCP 46) : part de ses octets, par sortie, en paquets plus grands que `voice_max_packet_bytes` (pas de la voix), et IP vues dans le trafic voix (IPBX, passerelles) à qui restreindre la classe | WARN au-delà de `port_range_non_voice_max_pct` | Moyenne : taille moyenne par enregistrement (un échantillon sFlow = un paquet) |
 | `exit_balance` | Une sortie de secours porte-t-elle du trafic (bascule) ? | WARN | Bonne |
+| `encapsulated` | Quelle part du trafic d'une sortie est encapsulée (IPsec/GRE/SD-WAN : protocoles IP 47/50, UDP 500/4500 et ports SD-WAN documentés) ? Total et tunnel mesurés sur le DSCP (champ toujours présent). Au-delà de `encapsulated_inconclusive_pct` (majorité), l'audit de classes n'est pas concluant : mesurer avant le tunnel | INCONCLUSIVE au-delà du seuil | Moyenne : la signature GRE/ESP dépend du champ `ip_proto` (`network.iana_number`, à vérifier) — absent, la part est sous-estimée sans verdict faussé ; ports SD-WAN réels à recouper |
+| `encapsulated_dscp` | Observation du DSCP externe du trafic encapsulé (répartition par défaut / marqué). La copie du DSCP interne (classification avant encapsulation, `pre-classify`, recopie ou marquage statique) ne se vérifie pas depuis l'extérieur : le constat reste non concluant avec sa consigne de vérification | INCONCLUSIVE (jamais OK ni WARN) | Moyenne : un DSCP par défaut peut être la copie correcte d'un trafic best effort interne, un DSCP marqué un marquage statique du tunnel |
 | `counter_consistency` | Somme des flux extrapolés vs octets des compteurs : un écart au-delà de la marge signale un facteur d'échantillonnage faux (P6) | WARN | Bonne quand les deux sources existent |
 | `sampling_adequacy` | Le sampling reçu est-il adapté à la capacité de la sortie (erreur au plancher) ? | WARN > 5 %, CRIT > 15 % | Bonne |
 | `sampling_cost` | Le sampling est-il trop fin (CPU, export) ? | WARN | Estimation au pire cas |
 | `sampling_drift` | Le sampling configuré (calibration) est-il celui reçu ? | WARN | Bonne |
-| `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage possible ? | WARN | Déclaratif |
+| `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage possible ? Chaque exporteur couvert par un périmètre validé, sans mise à jour depuis ? | WARN | Déclaratif |
 
 ## Lecture du débordement de classe
 

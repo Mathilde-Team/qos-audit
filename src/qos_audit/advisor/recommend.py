@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from loguru import logger
+
 from qos_audit.advisor.catalog import App
 from qos_audit.advisor.discover import FlowCluster
 from qos_audit.advisor.profile import backup_evidence, thresholds_from_app
 from qos_audit.models import Policy
-
-from loguru import logger
 
 __all__ = ["Recommendation", "recommend"]
 

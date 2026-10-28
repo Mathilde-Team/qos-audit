@@ -9,6 +9,11 @@ description = "Qualification automatisée de la mise en oeuvre QoS (politique th
 requires-python = ">=3.11"
 dependencies = ["opensearch-py>=2.4", "pyyaml>=6", "loguru>=0.7", "jinja2>=3.1"]
 
+[project.optional-dependencies]
+# Collecte des drops par file en SSH (issue #10) : « uv sync --extra comware ».
+# Version figée (SOCLE §4).
+comware = ["netmiko==4.8.0"]
+
 [project.scripts]
 qos-audit = "qos_audit.cli:main"
 
@@ -25,7 +30,9 @@ line-length = 120
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Les tests d'intégration (#17) demandent un OpenSearch : job CI « Intégration OpenSearch » (pytest -m integration).
+addopts = "-ra -m 'not integration'"
+markers = ["integration: requiert un OpenSearch joignable (variable OPENSEARCH_URL)"]
 
 [tool.coverage.run]
 # Couverture des branches obligatoire (SOCLE.md §4).
@@ -33,8 +40,7 @@ branch = true
 source = ["src/qos_audit"]
 
 [tool.coverage.report]
-# Seuil bloquant de l'équipe : 95 % (Mathilde-Team/.github#9). Palier du dépôt :
-# mesure du 25/10/2026 après #24 (80,11 %, entier inférieur), relevé à chaque PR jusqu'à 95 (suivi : #5).
-fail_under = 80
+# Seuil bloquant de l'équipe : 95 % (Mathilde-Team/.github#9), atteint le 26/10/2026 (95,90 %, #5).
+fail_under = 95
 show_missing = true
 skip_covered = false

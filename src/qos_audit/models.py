@@ -8,7 +8,23 @@ from enum import Enum, IntEnum
 
 from loguru import logger
 
-__all__ = ["Direction", "Exit", "Finding", "FlowMatch", "Policy", "QosClass", "Severity", "Site", "rel_error_pct"]
+__all__ = [
+    "WIDE_PORT_RANGE",
+    "Direction",
+    "Exit",
+    "Finding",
+    "FlowMatch",
+    "Policy",
+    "QosClass",
+    "Severity",
+    "Site",
+    "rel_error_pct",
+    "wide_port_range",
+]
+
+# Plage de ports au-delà de laquelle un match sans IP est jugé trop large (#32) : une plage RTP
+# (16384-32767) recouvre les ports éphémères des clients (32768-60999 Linux, 49152-65535 Windows).
+WIDE_PORT_RANGE = 1024
 
 
 def rel_error_pct(samples: int, margin: float = 1.0) -> float:
@@ -24,6 +40,27 @@ def rel_error_pct(samples: int, margin: float = 1.0) -> float:
     err = 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
     logger.debug("rel_error_pct: retour | n={} -> {:.1f} %", samples, err)
     return err
+
+
+def wide_port_range(m: FlowMatch, max_ports: int = WIDE_PORT_RANGE) -> tuple[int, int] | None:
+    """Plage de ports trop large d'un match sans restriction d'IP (#32).
+
+    Args:
+        m: Critère de classification.
+        max_ports: Nombre de ports au-delà duquel une plage est large.
+
+    Returns:
+        La plus large des plages (source ou destination) de plus de ``max_ports`` ports si le match
+        ne restreint ni l'IP source ni l'IP destination ; ``None`` sinon.
+    """
+    logger.debug("wide_port_range: entrée | {}", m)
+    plages = [r for r in (m.dst_ports, m.src_ports) if r is not None and r[1] - r[0] + 1 > max_ports]
+    if m.src_cidr or m.dst_cidr or not plages:
+        logger.debug("wide_port_range: sortie | aucune")
+        return None
+    plage = max(plages, key=lambda r: r[1] - r[0])
+    logger.debug("wide_port_range: sortie | {}", plage)
+    return plage
 
 
 class Severity(IntEnum):
@@ -44,13 +81,19 @@ class Direction(str, Enum):
 
 @dataclass(frozen=True)
 class FlowMatch:
-    """Équivalent d'une règle d'ACL (critères de classification)."""
+    """Équivalent d'une règle d'ACL (critères de classification).
+
+    ``excludes`` porte les ``deny`` qui précèdent la règle dans l'ACL (première
+    correspondance gagnante, issue #21) : le trafic correspondant à une exclusion
+    est rejeté par l'ACL et ne doit pas être compté dans le match.
+    """
 
     protocol: str | None = None
     src_cidr: str | None = None
     dst_cidr: str | None = None
     src_ports: tuple[int, int] | None = None
     dst_ports: tuple[int, int] | None = None
+    excludes: tuple["FlowMatch", ...] = ()
 
 
 @dataclass(frozen=True)

@@ -52,6 +52,7 @@ def split_blocks(text: str) -> list[tuple[str, list[str]]]:
     (``sysname``, ``qos apply policy ... global``) forment des blocs d'une ligne. Les artefacts de pagination et
     les invites ``<nom>`` sont ignorés.
     """
+    logger.debug("split_blocks: entrée | {} caractère(s)", len(text))
     blocks: list[tuple[str, list[str]]] = []
     header: str | None = None
     body: list[str] = []
@@ -59,6 +60,7 @@ def split_blocks(text: str) -> list[tuple[str, list[str]]]:
     def flush() -> None:
         if header is not None:
             blocks.append((header, body.copy()))
+        logger.debug("split_blocks.flush: sortie | {} bloc(s)", len(blocks))
 
     for raw in text.splitlines():
         line = _CLEAN.sub("", raw).rstrip()
@@ -78,12 +80,15 @@ def split_blocks(text: str) -> list[tuple[str, list[str]]]:
             flush()
             header, body = line.strip(), []
     flush()
+    logger.debug("split_blocks: sortie | {} bloc(s)", len(blocks))
     return blocks
 
 
 def _port(token: str) -> int | None:
     if token.isdigit():
+        logger.debug("_port: sortie (numérique) | {}", token)
         return int(token)
+    logger.debug("_port: sortie (nom ou inconnu) | {}", token)
     return _PORT_NAMES.get(token.lower())
 
 
@@ -91,16 +96,20 @@ def _read_port_spec(
     tokens: list[str], i: int, unsupported: list[str]
 ) -> tuple[tuple[str, int, int | None] | None, int]:
     """Lit ``eq|gt|lt|neq p`` ou ``range p1 p2`` à partir de tokens[i] (l'opérateur). Retourne (spec, nouvel indice)."""
+    logger.debug("_read_port_spec: entrée | indice {}", i)
     op = tokens[i].lower() if i < len(tokens) else ""
     if op == "range" and i + 2 < len(tokens):
         p1, p2 = _port(tokens[i + 1]), _port(tokens[i + 2])
         if p1 is not None and p2 is not None:
+            logger.debug("_read_port_spec: sortie (plage) | {}-{}", p1, p2)
             return ("range", p1, p2), i + 3
     elif op in {"eq", "gt", "lt", "neq"} and i + 1 < len(tokens):
         p1 = _port(tokens[i + 1])
         if p1 is not None:
+            logger.debug("_read_port_spec: sortie ({} {}) | {}", op, p1, p1)
             return (op, p1, None), i + 2
     unsupported.append(" ".join(tokens[i : i + 3]))
+    logger.debug("_read_port_spec: sortie (non lue) | {}", tokens[i : i + 3])
     return None, i + 3
 
 
@@ -114,11 +123,13 @@ def parse_rule(line: str, kind: str) -> AclRule | None:
     Returns:
         La règle, ou ``None`` si la ligne n'est pas une règle ``permit``/``deny`` reconnaissable.
     """
+    logger.debug("parse_rule: entrée | {}", line.strip())
     t = line.split()
     i = 1
     rule_id = int(t[i]) if len(t) > i and t[i].isdigit() else None
     i += 1 if rule_id is not None else 0
     if i >= len(t) or t[i] not in {"permit", "deny"}:
+        logger.debug("parse_rule: sortie (non permit/deny) | {}", line.strip())
         return None
     action = t[i]
     i += 1
@@ -165,13 +176,16 @@ def parse_rule(line: str, kind: str) -> AclRule | None:
         else:
             unsupported.append(tok)
             i += 1
+    logger.debug("parse_rule: sortie | id={} action={} non lu(s)={}", rule_id, action, len(unsupported))
     return AclRule(rule_id, action, protocol, unsupported=tuple(unsupported), raw=line, **fields)
 
 
 def _parse_acl(dev: DeviceQos, h: list[str], body: list[str]) -> None:
+    logger.debug("_parse_acl: entrée | {}", " ".join(h))
     toks = h[1:]
     if toks and toks[0] in {"ipv6", "mac", "ethernet-frame"}:
         dev.issues.append(Issue("INFO", "acl_type_ignored", " ".join(h), "ACL non IPv4 ignorée"))
+        logger.debug("_parse_acl: sortie (ACL non IPv4 ignorée)")
         return
     kind, number, name = None, None, None
     i = 0
@@ -188,6 +202,7 @@ def _parse_acl(dev: DeviceQos, h: list[str], body: list[str]) -> None:
         kind = "basic" if 2000 <= n <= 2999 else "advanced" if 3000 <= n <= 3999 else None
     if kind is None:
         dev.issues.append(Issue("WARN", "acl_type_unknown", " ".join(h), "type d'ACL non reconnu"))
+        logger.debug("_parse_acl: sortie (type inconnu) | {}", " ".join(h))
         return
     acl = Acl(kind, number, name)
     for line in body:
@@ -201,9 +216,11 @@ def _parse_acl(dev: DeviceQos, h: list[str], body: list[str]) -> None:
         dev.acls[f"num:{number}"] = acl
     if name:
         dev.acls[f"name:{name}"] = acl
+    logger.debug("_parse_acl: sortie | {} règle(s) dans {}", len(acl.rules), acl.label)
 
 
 def _parse_group(dev: DeviceQos, name: str, body: list[str]) -> None:
+    logger.debug("_parse_group: entrée | {}", name)
     cidrs: list[str] = []
     for line in body:
         t = line.split()
@@ -224,9 +241,11 @@ def _parse_group(dev: DeviceQos, name: str, body: list[str]) -> None:
             logger.debug("Entrée de groupe invalide ({}) : {} : {}", name, line.strip(), exc)
             dev.issues.append(Issue("WARN", "object_group_entry_invalid", name, line))
     dev.groups[name] = cidrs
+    logger.debug("_parse_group: sortie | {} CIDR(s) dans {}", len(cidrs), name)
 
 
 def _parse_classifier(dev: DeviceQos, h: list[str], body: list[str]) -> None:
+    logger.debug("_parse_classifier: entrée | {}", " ".join(h))
     cls = Classifier(h[2], h[4].lower() if len(h) > 4 and h[3] == "operator" else "and")
     for line in body:
         t = line.split()
@@ -244,9 +263,11 @@ def _parse_classifier(dev: DeviceQos, h: list[str], body: list[str]) -> None:
         else:
             cls.criteria.append(("other", " ".join(rest)))
     dev.classifiers[cls.name] = cls
+    logger.debug("_parse_classifier: sortie | {} critère(s) dans {}", len(cls.criteria), cls.name)
 
 
 def _parse_behavior(dev: DeviceQos, name: str, body: list[str]) -> None:
+    logger.debug("_parse_behavior: entrée | {}", name)
     beh = Behavior(name)
     for line in body:
         t = line.split()
@@ -259,9 +280,11 @@ def _parse_behavior(dev: DeviceQos, name: str, body: list[str]) -> None:
         else:
             beh.other.append(line)
     dev.behaviors[name] = beh
+    logger.debug("_parse_behavior: sortie | remark_dscp={} dans {}", beh.remark_dscp, name)
 
 
 def _parse_interface(dev: DeviceQos, name: str, body: list[str]) -> None:
+    logger.debug("_parse_interface: entrée | {}", name)
     itf = dev.interfaces.setdefault(name, InterfaceQos(name))
     for line in body:
         t = line.split()
@@ -271,6 +294,7 @@ def _parse_interface(dev: DeviceQos, name: str, body: list[str]) -> None:
             itf.trust = t[2]
         elif t[:2] == ["qos", "priority"] and len(t) > 2:
             itf.priority = t[2]
+    logger.debug("_parse_interface: sortie | {} politique(s) appliquée(s) sur {}", len(itf.applied), name)
 
 
 def parse_device(text: str, exporter: str | None = None, source: str = "") -> DeviceQos:
@@ -284,6 +308,7 @@ def parse_device(text: str, exporter: str | None = None, source: str = "") -> De
     Returns:
         QoS extraite et constats d'analyse.
     """
+    logger.debug("parse_device: entrée | exporteur={} source={}", exporter, source)
     dev = DeviceQos(exporter=exporter or source or "inconnu", source=source)
     for header, body in split_blocks(text):
         h = header.split()
@@ -312,4 +337,11 @@ def parse_device(text: str, exporter: str | None = None, source: str = "") -> De
             dev.vlan_apps.append((h[2], h[-1], " ".join(h[4:-1])))
     if exporter is None and dev.sysname:
         dev.exporter = dev.sysname
+    logger.debug(
+        "parse_device: sortie | {} ACL(s), {} classe(s), {} politique(s), {} constat(s)",
+        len(dev.acls),
+        len(dev.classifiers),
+        len(dev.policies),
+        len(dev.issues),
+    )
     return dev

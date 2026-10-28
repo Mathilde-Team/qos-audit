@@ -1,6 +1,7 @@
 """Tests de l'heuristique « candidat sauvegarde » (issue #9, advisor/profile.py)."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from qos_audit.advisor.catalog import App, load_catalog
 from qos_audit.advisor.discover import FlowCluster, discover_unclassified
@@ -8,8 +9,6 @@ from qos_audit.advisor.profile import BackupThresholds, backup_evidence, thresho
 from qos_audit.advisor.recommend import recommend
 from qos_audit.elastiflow import ElastiflowClient, Window
 from qos_audit.policy import load_policy
-
-from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 

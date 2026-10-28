@@ -20,7 +20,7 @@ from loguru import logger
 from qos_audit.advisor.catalog import App
 from qos_audit.advisor.discover import FlowCluster
 
-__all__ = ["BackupThresholds", "thresholds_from_app", "backup_evidence"]
+__all__ = ["BackupThresholds", "backup_evidence", "thresholds_from_app"]
 
 
 @dataclass(frozen=True)

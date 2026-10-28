@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import csv
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -13,9 +15,21 @@ from qos_audit.comware.convert import acl_to_matches, dscp_name
 from qos_audit.comware.ifname import normalize_ifname
 from qos_audit.comware.model import DeviceQos, Issue
 from qos_audit.comware.parser import parse_device
-from qos_audit.models import FlowMatch, Policy
+from qos_audit.models import FlowMatch, Policy, wide_port_range
 
-__all__ = ["MarkingRule", "build_policy", "load_devices", "load_ifindex_map", "marking_rules", "render_report"]
+__all__ = [
+    "MarkingRule",
+    "assign_sites",
+    "build_policy",
+    "build_site_policies",
+    "load_devices",
+    "load_ifindex_map",
+    "load_site_map",
+    "marking_rules",
+    "render_report",
+    "render_site_report",
+    "site_policy_filename",
+]
 
 _CATCH_ALL_PRIORITY = 9
 _UNKNOWN_PRIORITY = 50
@@ -54,16 +68,19 @@ def load_devices(paths: list[Path], exporter: str | None = None) -> list[DeviceQ
     Returns:
         Un ``DeviceQos`` par fichier.
     """
+    logger.debug("load_devices: entrée | {} chemin(s)", len(paths))
     files: list[Path] = []
     for p in paths:
         files += sorted([*p.glob("*.cfg"), *p.glob("*.txt")]) if p.is_dir() else [p]
     if exporter and len(files) != 1:
         msg = "--exporter n'est valable que pour un seul fichier de configuration"
+        logger.debug("load_devices: sortie (refus) | {} fichier(s) avec --exporter", len(files))
         raise ValueError(msg)
     devices = []
     for f in files:
         logger.info("Analyse de {}", f)
         devices.append(parse_device(f.read_text(encoding="utf-8", errors="replace"), exporter, f.name))
+    logger.debug("load_devices: sortie | {} équipement(s)", len(devices))
     return devices
 
 
@@ -103,16 +120,38 @@ def _applications(dev: DeviceQos, policy: str) -> list[str]:
     apps = [f"{i.name} {d}" for i in dev.interfaces.values() for p, d in i.applied if p == policy]
     apps += [f"global {d}" for p, d in dev.global_apps if p == policy]
     apps += [f"vlan {v} {d}" for p, d, v in dev.vlan_apps if p == policy]
+    logger.debug("_applications: sortie | {} application(s) de {}", len(apps), policy)
     return apps
+
+
+def _flag_wide_ranges(dev: DeviceQos, subject: str, matches: list[FlowMatch]) -> None:
+    """Constat ``acl_port_range_wide`` pour chaque plage trop large sans restriction d'IP (#32)."""
+    logger.debug("_flag_wide_ranges: entrée | {} ({} match)", subject, len(matches))
+    for m in matches:
+        plage = wide_port_range(m)
+        if plage is not None:
+            dev.issues.append(
+                Issue(
+                    "WARN",
+                    "acl_port_range_wide",
+                    subject,
+                    f"{m.protocol or 'ip'} ports {plage[0]}-{plage[1]} ({plage[1] - plage[0] + 1} ports) sans IP : "
+                    "attrape aussi des ports éphémères, restreindre aux IP des serveurs (IPBX, passerelles)",
+                )
+            )
+    logger.debug("_flag_wide_ranges: sortie | {} constat(s)", len(dev.issues))
 
 
 def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], bool]:
     """Critères d'un classifier : (FlowMatch, catch_all)."""
+    logger.debug("_classifier_matches: entrée | {}", name)
     if name == "default-class":
+        logger.debug("_classifier_matches: sortie | default-class, catch-all")
         return [], True
     cls = dev.classifiers.get(name)
     if cls is None:
         dev.issues.append(Issue("ERROR", "classifier_not_found", name, "classifier référencé mais non défini"))
+        logger.debug("_classifier_matches: sortie | classifier {} introuvable", name)
         return [], False
     catch_all = any(k == "any" for k, _ in cls.criteria)
     acls = [v for k, v in cls.criteria if k == "acl"]
@@ -132,12 +171,16 @@ def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], boo
         if acl is None:
             dev.issues.append(Issue("ERROR", "acl_not_found", name, f"ACL {key} référencée mais non définie"))
             continue
-        matches += acl_to_matches(dev, acl)
+        converted = acl_to_matches(dev, acl)
+        _flag_wide_ranges(dev, acl.label, converted)
+        matches += converted
+    logger.debug("_classifier_matches: sortie | {} match(s) pour {}", len(matches), name)
     return matches, catch_all and not matches
 
 
 def marking_rules(dev: DeviceQos) -> list[MarkingRule]:
     """Règles de marquage (``remark dscp`` / ``remark ip-precedence``) des policies effectivement appliquées."""
+    logger.debug("marking_rules: entrée | {} policy(ies)", len(dev.policies))
     rules: list[MarkingRule] = []
     for pol in dev.policies.values():
         apps = _applications(dev, pol.name)
@@ -157,24 +200,34 @@ def marking_rules(dev: DeviceQos) -> list[MarkingRule]:
                     dev.exporter, pol.name, entry.classifier, beh.name, beh.dscp, tuple(matches), catch_all, tuple(apps)
                 )
             )
+    logger.debug("marking_rules: sortie | {} règle(s)", len(rules))
     return rules
 
 
 def _dedupe(matches: list[FlowMatch]) -> list[FlowMatch]:
+    logger.debug("_dedupe: sortie | {} -> {} unique(s)", len(matches), len(dict.fromkeys(matches)))
     return list(dict.fromkeys(matches))
 
 
 def _match_to_dict(m: FlowMatch) -> dict:
+    logger.debug("_match_to_dict: entrée | {}", m)
+
     def rng(r: tuple[int, int] | None) -> str | None:
+        logger.debug("_match_to_dict.rng: sortie | {}", r)
         return None if r is None else (str(r[0]) if r[0] == r[1] else f"{r[0]}-{r[1]}")
 
     d = {"protocol": m.protocol, "src_cidr": m.src_cidr, "dst_cidr": m.dst_cidr,
          "src_ports": rng(m.src_ports), "dst_ports": rng(m.dst_ports)}  # fmt: skip
-    return {k: v for k, v in d.items() if v is not None}
+    d = {k: v for k, v in d.items() if v is not None}
+    if m.excludes:  # #21 : les deny précédents, sérialisés comme le match lui-même
+        d["excludes"] = [_match_to_dict(e) for e in m.excludes]
+    logger.debug("_match_to_dict: sortie | {} clé(s)", len(d))
+    return d
 
 
 def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tuple[str, str], int]) -> list[dict]:
     """Interfaces d'entrée où un classifier « tout le reste » ramène le DSCP à une valeur autorisée."""
+    logger.debug("_untrusted: entrée | {} règle(s)", len(rules))
     out: list[dict] = []
     for r in rules:
         if not (r.catch_all and r.dscp in allowed):
@@ -188,6 +241,7 @@ def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tu
             if key in ifmap:
                 entry["ifindex"] = ifmap[key]
             out.append(entry)
+    logger.debug("_untrusted: sortie | {} interface(s)", len(out))
     return out
 
 
@@ -209,6 +263,7 @@ def build_policy(
     Returns:
         ``(politique sous forme de dictionnaire YAML, extraction avec règles et constats)``.
     """
+    logger.debug("build_policy: entrée | {} équipement(s)", len(devices))
     ifmap = ifmap or {}
     ext = Extraction(devices=devices)
     for dev in devices:
@@ -283,39 +338,209 @@ def build_policy(
     _divergences(ext)
     for dev in devices:
         ext.issues += dev.issues
+    logger.debug(
+        "build_policy: sortie | {} classe(s), {} règle(s), {} constat(s)",
+        len(classes),
+        len(ext.rules),
+        len(ext.issues),
+    )
     return policy, ext
 
 
+def _match_label(m: FlowMatch) -> str:
+    """Critère lisible : ``udp dst_ports=5060`` (``ip`` si aucun protocole)."""
+    logger.debug("_match_label: entrée | {}", m)
+    d = _match_to_dict(m)
+    label = " ".join([d.pop("protocol", "ip"), *(f"{k}={v}" for k, v in d.items())])
+    logger.debug("_match_label: sortie | {}", label)
+    return label
+
+
 def _divergences(ext: Extraction) -> None:
-    """Signale les équipements dont les règles de marquage diffèrent pour un même DSCP (le plan est global)."""
+    """Signale les équipements dont les règles de marquage diffèrent pour un même DSCP (le plan est global).
+
+    Le message détaille, par équipement, les critères qui ne sont pas communs à tous (#23).
+    """
+    logger.debug("_divergences: entrée | {} règle(s)", len(ext.rules))
     per_dscp: dict[int, dict[str, set[FlowMatch]]] = {}
     for r in ext.rules:
         if not r.catch_all:
             per_dscp.setdefault(r.dscp, {}).setdefault(r.exporter, set()).update(r.matches)
     for dscp, by_dev in per_dscp.items():
         if len({frozenset(v) for v in by_dev.values()}) > 1:
+            common = set.intersection(*by_dev.values())
+            details = [
+                f"{exp} : " + (", ".join(sorted(_match_label(m) for m in ms - common)) or "aucun")
+                for exp, ms in sorted(by_dev.items())
+            ]
             ext.issues.append(
                 Issue(
                     "WARN",
                     "devices_diverge",
                     dscp_name(dscp),
-                    f"règles différentes selon l'équipement : {sorted(by_dev)} (union retenue)",
+                    "règles différentes selon l'équipement (union retenue) ; critères non communs : "
+                    + " ; ".join(details),
                 )
             )
+    logger.debug("_divergences: sortie | {} constat(s)", len(ext.issues))
+
+
+def load_site_map(path: Path) -> dict[str, str]:
+    """Charge un CSV ``exporter,site`` : rattachement des équipements (commutateurs d'accès compris) aux sites.
+
+    Args:
+        path: Fichier CSV avec en-tête.
+
+    Returns:
+        ``{exporteur: site}``.
+
+    Raises:
+        ValueError: Un exporteur rattaché à deux sites.
+    """
+    logger.debug("load_site_map: entrée | {}", path)
+    out: dict[str, str] = {}
+    with path.open(encoding="utf-8", newline="") as fh:
+        for r in csv.DictReader(fh):
+            exporter, site = r["exporter"].strip(), r["site"].strip()
+            if out.setdefault(exporter, site) != site:
+                msg = f"{path} : {exporter} rattaché à deux sites ({out[exporter]} et {site})"
+                logger.debug("load_site_map: sortie (conflit) | {}", msg)
+                raise ValueError(msg)
+    logger.debug("load_site_map: sortie | {} exporteur(s)", len(out))
+    return out
+
+
+def assign_sites(
+    devices: list[DeviceQos], base: Policy, site_map: dict[str, str] | None = None
+) -> tuple[dict[str, list[DeviceQos]], dict[str, str], list[Issue]]:
+    """Rattache chaque équipement à un site : exporteur des sorties de la politique, ou ``site_map``.
+
+    Args:
+        devices: Équipements analysés.
+        base: Politique du plan (sites et sorties).
+        site_map: Rattachement explicite ``{exporteur: site}`` (prioritaire).
+
+    Returns:
+        ``(équipements par site, rattachement exporteur -> site, constats)``.
+
+    Raises:
+        ValueError: ``site_map`` désigne un site absent de la politique.
+    """
+    logger.debug("assign_sites: entrée | {} équipement(s), {} site(s)", len(devices), len(base.sites))
+    groups: dict[str, list[DeviceQos]] = {s.name: [] for s in base.sites}
+    mapping = {e.exporter: s.name for s in base.sites for e in s.exits}
+    unknown = sorted({site for site in (site_map or {}).values() if site not in groups})
+    if unknown:
+        msg = f"rattachement vers des sites absents de la politique : {', '.join(unknown)}"
+        logger.debug("assign_sites: sortie (site inconnu) | {}", msg)
+        raise ValueError(msg)
+    mapping |= site_map or {}
+    issues: list[Issue] = []
+    for dev in devices:
+        site = mapping.get(dev.exporter)
+        if site is None:
+            issues.append(
+                Issue(
+                    "WARN",
+                    "device_without_site",
+                    dev.exporter,
+                    "équipement rattaché à aucun site (ni sortie de la politique, ni --site-map) : "
+                    "absent des politiques par site",
+                )
+            )
+            continue
+        groups[site].append(dev)
+    for name, devs in groups.items():
+        if not devs:
+            issues.append(
+                Issue("WARN", "site_without_device", name, "aucune configuration pour ce site : match du plan conservé")
+            )
+    logger.debug("assign_sites: sortie | {} constat(s)", len(issues))
+    return groups, mapping, issues
+
+
+def build_site_policies(
+    devices: list[DeviceQos],
+    base: Policy,
+    ifmap: dict[tuple[str, str], int] | None = None,
+    site_map: dict[str, str] | None = None,
+) -> tuple[dict[str, tuple[dict, Extraction]], list[Issue]]:
+    """Une politique par site, construite avec les seuls équipements du site (#23).
+
+    Chaque politique ne garde que son site ; les ports non fiables de la politique de base y sont repris s'ils
+    appartiennent à un équipement du site, ou à un exporteur rattaché à aucun site.
+
+    Args:
+        devices: Équipements analysés.
+        base: Politique du plan (classes, sites, seuils).
+        ifmap: Correspondance (exporteur, nom d'interface normalisé) -> ifIndex.
+        site_map: Rattachement explicite ``{exporteur: site}``.
+
+    Returns:
+        ``({site: (politique, extraction)}, constats de rattachement)``.
+    """
+    logger.debug("build_site_policies: entrée | {} équipement(s)", len(devices))
+    groups, mapping, issues = assign_sites(devices, base, site_map)
+    out: dict[str, tuple[dict, Extraction]] = {}
+    for site in base.sites:
+        untrusted = [u for u in base.untrusted if mapping.get(u.get("exporter"), site.name) == site.name]
+        site_base = replace(base, sites=[site], untrusted=untrusted)
+        # copie : build_policy ajoute ses constats aux équipements, déjà comptés dans l'extraction globale
+        out[site.name] = build_policy(copy.deepcopy(groups[site.name]), site_base, ifmap)
+    logger.debug("build_site_policies: sortie | {} politique(s)", len(out))
+    return out, issues
+
+
+def site_policy_filename(site: str) -> str:
+    """Nom du fichier de politique d'un site : ``policy.<site>.yaml`` (caractères sûrs uniquement)."""
+    logger.debug("site_policy_filename: entrée | {}", site)
+    name = f"policy.{re.sub(r'[^A-Za-z0-9_.-]', '_', site)}.yaml"
+    logger.debug("site_policy_filename: sortie | {}", name)
+    return name
+
+
+def render_site_report(sites: dict[str, tuple[dict, Extraction]], issues: list[Issue]) -> str:
+    """Section Markdown des politiques par site : équipements, fichier, constats propres au site."""
+    logger.debug("render_site_report: entrée | {} site(s)", len(sites))
+    lines = [
+        "",
+        "## Politiques par site",
+        "",
+        "| Site | Équipements | Fichier | Constats WARN/ERROR |",
+        "|---|---|---|---|",
+    ]
+    for name, (_policy, ext) in sites.items():
+        devs = ", ".join(d.exporter for d in ext.devices) or "aucun"
+        n = sum(1 for i in ext.issues if i.level in {"WARN", "ERROR"})
+        lines.append(f"| {name} | {devs} | `{site_policy_filename(name)}` | {n} |")
+    for name, (_policy, ext) in sites.items():
+        site_issues = [i for i in ext.issues if i.code in {"devices_diverge", "plan_class_without_rule"}]
+        if site_issues:
+            lines += ["", f"### {name}", ""]
+            lines += [f"- **{i.level}** `{i.code}` {i.subject} : {i.message}" for i in site_issues]
+    if issues:
+        lines += ["", "### Rattachement", ""]
+        lines += [f"- **{i.level}** `{i.code}` {i.subject} : {i.message}" for i in issues]
+    text = "\n".join(lines) + "\n"
+    logger.debug("render_site_report: sortie | {} ligne(s)", len(lines))
+    return text
 
 
 def policy_to_yaml(policy: dict, sources: list[str]) -> str:
     """Sérialise la politique avec un en-tête de provenance."""
+    logger.debug("policy_to_yaml: entrée | {} source(s)", len(sources))
     head = (
         "# Généré par `qos-audit extract` depuis : "
         + ", ".join(sources)
         + "\n# À relire avant usage (voir extraction_report.md).\n"
     )
+    logger.debug("policy_to_yaml: sortie | {} caractère(s)", len(head))
     return head + yaml.safe_dump(policy, sort_keys=False, allow_unicode=True)
 
 
 def render_report(ext: Extraction, policy: dict) -> str:
     """Rapport Markdown : couverture par équipement, règles de marquage, constats."""
+    logger.debug("render_report: entrée | {} équipement(s), {} règle(s)", len(ext.devices), len(ext.rules))
     lines = ["# Rapport d'extraction QoS", "", "## Équipements", "",
              "| Exporteur | Fichier | ACL | Classifiers | Behaviors | Policies | Interfaces avec policy |", "|---|---|---|---|---|---|---|"]  # fmt: skip
     for d in ext.devices:
@@ -349,4 +574,5 @@ def render_report(ext: Extraction, policy: dict) -> str:
         lines.append(f"- **{i.level}** `{i.code}` {i.subject} : {i.message}")
     if not ext.issues:
         lines.append("- aucun")
+    logger.debug("render_report: sortie | {} ligne(s)", len(lines))
     return "\n".join(lines) + "\n"

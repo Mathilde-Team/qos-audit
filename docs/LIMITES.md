@@ -6,7 +6,15 @@ La **conformité du marquage observé** et la **charge offerte par classe**, à 
 
 ## Ce qu'il ne prouve pas
 
-1. **Que la priorisation fonctionne.** sFlow ne voit ni files ni drops. Preuve directe : compteurs Comware ou SNMP (`counters.py`).
+1. **Que la priorisation fonctionne.** sFlow ne voit ni files ni drops. Preuve directe : compteurs Comware
+   ou SNMP (`counters.py`). La collecte CLI Comware est implémentée (`ComwareCliCounters`, issue #10) :
+   les drops ne se mesurent qu'entre **deux** exécutions d'audit — la première pose la référence —
+   et uniquement si la fenêtre d'analyse est entièrement comprise entre les deux relevés (exécutions plus
+   rapprochées que la fenêtre + le délai d'ingestion ⇒ aucun delta, jamais proratisé). Le delta
+   appartient à l'**intervalle d'observation** [premier relevé, second relevé], qui contient la
+   fenêtre mais peut la déborder : le rapport présente cet intervalle, des drops survenus hors
+   fenêtre y sont inclus. Certaines versions (5130) n'exposent pas les drops par file : sortie non
+   mesurable, pas de zéro inventé.
 2. **La qualité vécue** (latence, jitter, perte). Prévoir RTCP/HEP, des sondes actives ou des flux synthétiques marqués.
 3. **Ce qui se passe dans le LAN**, hors des sorties instrumentées.
 
@@ -28,9 +36,11 @@ Les petits flux et les voix courtes sont mal représentés avec un taux de 1/100
 - **Capacité ≠ vitesse du port.** Un port de 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200. Renseigner `capacity_bps`.
 - **Microbursts** invisibles : buckets d'une minute par défaut (`Window.bucket`).
 - **Point de mesure** : l'échantillonnage en sortie n'est pas supporté de la même façon selon le modèle et la version de Comware (à vérifier). Le DSCP vu dépend du moment de l'échantillonnage (avant ou après la politique de sortie).
-- **Tunnels et chiffrement** : après IPsec, GRE ou SD-WAN, seuls l'en-tête externe et son DSCP sont visibles. Les ACL par ports ne s'appliquent plus.
+- **Tunnels et chiffrement** : après IPsec, GRE ou SD-WAN, seuls l'en-tête externe et son DSCP sont visibles. Les ACL par ports ne s'appliquent plus. Le contrôle `encapsulated` (#30) mesure la part de trafic encapsulé par sortie (protocoles IP 47/50, UDP 500/4500, ports SD-WAN documentés) : majorité = audit non concluant, mesurer avant le tunnel ; `encapsulated_dscp` observe le DSCP externe (la copie du DSCP interne ne se vérifie pas depuis l'extérieur).
 - **Asymétrie et multi-sorties** : l'aller et le retour peuvent emprunter des sorties différentes ; raisonner par site et par sens.
 - **ACL par plages de ports** : une plage RTP attrape aussi des ports éphémères. Préférer IP serveur + ports.
+  L'extraction le signale (`acl_port_range_wide`) et le contrôle `port_range` mesure, pour la voix, la part
+  d'octets en gros paquets et liste les IP candidates (IPBX, passerelles).
 - **Schéma ElastiFlow** : `FIELDS` à valider ; l'application du taux d'échantillonnage (`scale_by_sampling`) dépend de la version.
 
 ## Ajouts de la session 03

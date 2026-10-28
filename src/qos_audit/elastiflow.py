@@ -31,6 +31,7 @@ FIELDS = {
     "dst_ip": "destination.ip",
     "src_port": "source.port",
     "dst_port": "destination.port",
+    "ip_proto": "network.iana_number",  # numéro de protocole IP (47 GRE, 50 ESP) — À VÉRIFIER
     "bytes": "network.bytes",
     "packets": "network.packets",
     "sampling": "flow.sampling.interval",
@@ -80,11 +81,14 @@ def configure_fields(overrides: dict[str, str]) -> None:
     Raises:
         ValueError: Si une clé logique est inconnue.
     """
+    logger.debug("configure_fields: entrée | {} surcharges", len(overrides))
     unknown = set(overrides) - set(FIELDS)
     if unknown:
         msg = f"Clés de champ inconnues : {sorted(unknown)}"
+        logger.debug("configure_fields: sortie (clés inconnues) | {}", sorted(unknown))
         raise ValueError(msg)
     FIELDS.update(overrides)
+    logger.debug("configure_fields: sortie | {} champs", len(FIELDS))
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,9 @@ class Window:
     @property
     def bucket_seconds(self) -> int:
         """Durée d'un bucket en secondes (formats ``30s``, ``1m``, ``1h``)."""
+        logger.debug(
+            "Window.bucket_seconds: sortie | {} -> {} s", self.bucket, int(self.bucket[:-1]) * _UNITS[self.bucket[-1]]
+        )
         return int(self.bucket[:-1]) * _UNITS[self.bucket[-1]]
 
 
@@ -112,7 +119,9 @@ def exit_filter(exporter: str, ifindex: int, direction: str) -> dict:
     Returns:
         Clause ``bool.filter``.
     """
+    logger.debug("exit_filter: entrée | {} ifindex={} sens={}", exporter, ifindex, direction)
     if_field = FIELDS["out_if"] if direction == "egress" else FIELDS["in_if"]
+    logger.debug("exit_filter: sortie | filtre sur {}", if_field)
     return {"bool": {"filter": [{"term": {FIELDS["exporter"]: exporter}}, {"term": {if_field: ifindex}}]}}
 
 
@@ -143,19 +152,29 @@ class ElastiflowClient:
         self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
         self._scale = scale_by_sampling
         self._overhead = bytes_overhead_per_packet
+        logger.debug(
+            "ElastiflowClient.__init__: sortie | index={} compteurs={} échelle={} overhead={}",
+            self._index,
+            self._counters_index,
+            self._scale,
+            self._overhead,
+        )
 
     def _query(self, w: Window, extra_filter: dict | None) -> dict:
         rng = {"range": {"@timestamp": {"gte": w.start.isoformat(), "lt": w.end.isoformat()}}}
+        logger.debug("_query: sortie | filtre={} +{}", "@timestamp", "extra" if extra_filter else "aucun")
         return {"bool": {"filter": [rng] + ([extra_filter] if extra_filter else [])}}
 
     def _bytes_agg(self) -> dict:
         if not self._scale and not self._overhead:
+            logger.debug("_bytes_agg: sortie | somme directe")
             return {"sum": {"field": FIELDS["bytes"]}}
         expr = f"doc['{FIELDS['bytes']}'].value"
         if self._overhead:
             expr = f"({expr} - {self._overhead} * doc['{FIELDS['packets']}'].value)"
         if self._scale:
             expr += f" * Math.max(1, doc['{FIELDS['sampling']}'].value)"
+        logger.debug("_bytes_agg: sortie | script")
         return {"sum": {"script": {"source": expr}}}
 
     def bytes_by(
@@ -173,6 +192,7 @@ class ElastiflowClient:
         Returns:
             Lignes ``{<clé>: valeur, "bytes": float, "samples": int}``.
         """
+        logger.debug("bytes_by: entrée | group_by={} max_pages={}", group_by, max_pages)
         sources = [{k: {"terms": {"field": FIELDS[k]}}} for k in group_by]
         rows: list[dict] = []
         after: dict | None = None
@@ -189,8 +209,10 @@ class ElastiflowClient:
             rows += [{**b["key"], "bytes": b["b"]["value"], "samples": b["doc_count"]} for b in agg["buckets"]]
             after = agg.get("after_key")
             if not after or not agg["buckets"]:
+                logger.debug("bytes_by: sortie (pagination terminée) | {} ligne(s)", len(rows))
                 return rows
         logger.warning("Pagination tronquée après {} pages (group_by={})", max_pages, group_by)
+        logger.debug("bytes_by: sortie (tronquée) | {} ligne(s)", len(rows))
         return rows
 
     def bytes_timeseries(self, w: Window, extra_filter: dict | None = None) -> list[dict]:
@@ -203,6 +225,7 @@ class ElastiflowClient:
         Returns:
             Lignes ``{"ts": str, "dscp": int, "bytes": float, "samples": int}``.
         """
+        logger.debug("bytes_timeseries: entrée | bucket={}", w.bucket)
         body = {
             "size": 0,
             "query": self._query(w, extra_filter),
@@ -214,6 +237,7 @@ class ElastiflowClient:
             },
         }
         res = self._os.search(index=self._index, body=body)["aggregations"]["t"]["buckets"]
+        logger.debug("bytes_timeseries: sortie | {} bucket(s)", len(res))
         return [
             {"ts": t["key_as_string"], "dscp": int(d["key"]), "bytes": d["b"]["value"], "samples": d["doc_count"]}
             for t in res

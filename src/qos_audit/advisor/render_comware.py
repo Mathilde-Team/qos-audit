@@ -5,9 +5,9 @@ La syntaxe est à valider selon le modèle et la version (Comware 7 supposé).
 
 from __future__ import annotations
 
-from qos_audit.advisor.recommend import Recommendation
-
 from loguru import logger
+
+from qos_audit.advisor.recommend import Recommendation
 
 __all__ = ["DSCP_KEYWORDS", "render_marking_policy"]
 
