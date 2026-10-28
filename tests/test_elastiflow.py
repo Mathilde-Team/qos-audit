@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from qos_audit import elastiflow
-
 from qos_audit.elastiflow import (
     COUNTER_FIELDS,
     ElastiflowClient,
