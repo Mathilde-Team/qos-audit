@@ -9,9 +9,20 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
-from qos_audit.elastiflow import configure_fields
+from qos_audit.elastiflow import configure_counter_fields, configure_fields
 
-__all__ = ["Calibration", "ExporterCal", "InterfaceCfg", "apply_calibration", "default_calibration", "load_calibration"]
+__all__ = [
+    "Calibration",
+    "ExporterCal",
+    "InterfaceCfg",
+    "Validation",
+    "apply_calibration",
+    "default_calibration",
+    "load_calibration",
+]
+
+# Valeur des gabarits (calibration.example.yaml) : équivaut à une valeur absente.
+_A_RENSEIGNER = "à renseigner"
 
 
 @dataclass(frozen=True)
@@ -24,8 +35,25 @@ class InterfaceCfg:
 
 
 @dataclass(frozen=True)
+class Validation:
+    """Périmètre validé d'un exporteur (protocole de validation, §10.4).
+
+    Relevé au moment de la signature : il est comparé à l'état déployé (``ExporterCal`` et
+    ``Calibration.elastiflow_version``) pour détecter une mise à jour depuis la validation.
+    """
+
+    validated_on: date | None = None
+    model: str | None = None
+    comware_version: str | None = None
+    elastiflow_version: str | None = None
+    sampling_direction: str = "inbound"
+    interface: int | None = None
+    sampling_rates: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class ExporterCal:
-    """Contexte de configuration sFlow d'un équipement."""
+    """Contexte de configuration sFlow d'un équipement (état déployé) et son périmètre validé."""
 
     name: str
     model: str | None = None
@@ -33,6 +61,7 @@ class ExporterCal:
     sampling_direction: str = "inbound"
     counter_interval_s: int = 300
     interfaces: tuple[InterfaceCfg, ...] = ()
+    validation: Validation | None = None
 
 
 @dataclass
@@ -40,12 +69,15 @@ class Calibration:
     """Paramètres établis par la phase 0 de validation."""
 
     fields: dict[str, str] = field(default_factory=dict)
+    counters_index: str | None = None
+    counter_fields: dict[str, str] = field(default_factory=dict)
     sampling_already_applied: bool | None = None
     bytes_overhead_per_packet: int = 0
     ingest_lag_minutes: int = 0
     exporters: dict[str, ExporterCal] = field(default_factory=dict)
     validated_on: date | None = None
     reference: str | None = None
+    elastiflow_version: str | None = None
 
     def configured_rate(self, exporter: str, ifindex: int) -> int | None:
         """Sampling configuré pour une interface, s'il est connu."""
@@ -66,6 +98,35 @@ def _as_date(value: object) -> date | None:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
 
 
+def _text(value: object) -> str | None:
+    """Chaîne renseignée, ou ``None`` (absente, vide ou gabarit « à renseigner »)."""
+    texte = None if value is None else str(value).strip()
+    return None if not texte or texte == _A_RENSEIGNER else texte
+
+
+def _validation(name: str, raw: object, defaults: dict) -> Validation | None:
+    """Bloc ``validation`` d'un exporteur ; date et version ElastiFlow héritées du niveau global."""
+    logger.debug("_validation: entrée | {}", name)
+    if raw is None:
+        logger.debug("_validation: sortie | {} sans bloc", name)
+        return None
+    if not isinstance(raw, dict):
+        logger.debug("_validation: sortie | {} bloc invalide", name)
+        raise ValueError(f"calibration : exporters.{name}.validation doit être un dictionnaire")
+    rates = raw.get("sampling_rates") or ()
+    v = Validation(
+        validated_on=_as_date(raw.get("validated_on", defaults["validated_on"])),
+        model=_text(raw.get("model")),
+        comware_version=_text(raw.get("comware_version")),
+        elastiflow_version=_text(raw.get("elastiflow_version", defaults["elastiflow_version"])),
+        sampling_direction=raw.get("sampling_direction", "inbound"),
+        interface=None if raw.get("interface") is None else int(raw["interface"]),
+        sampling_rates=tuple(int(r) for r in rates),
+    )
+    logger.debug("_validation: sortie | {} validé le {}", name, v.validated_on)
+    return v
+
+
 def load_calibration(path: Path) -> Calibration:
     """Charge ``calibration.yaml``.
 
@@ -74,31 +135,42 @@ def load_calibration(path: Path) -> Calibration:
 
     Returns:
         La calibration typée.
+
+    Raises:
+        ValueError: bloc ``validation`` d'un exporteur mal formé.
     """
+    logger.debug("load_calibration: entrée | {}", path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     ef = raw.get("elastiflow", {})
+    defaults = {"validated_on": raw.get("validated_on"), "elastiflow_version": ef.get("version")}
     exporters = {
         name: ExporterCal(
             name=name,
-            model=e.get("model"),
-            comware_version=e.get("comware_version"),
+            model=_text(e.get("model")),
+            comware_version=_text(e.get("comware_version")),
             sampling_direction=e.get("sampling_direction", "inbound"),
             counter_interval_s=int(e.get("counter_interval_s", 300)),
             interfaces=tuple(
                 InterfaceCfg(int(i["ifindex"]), i.get("name"), i.get("sampling_rate")) for i in e.get("interfaces", [])
             ),
+            validation=_validation(name, e.get("validation"), defaults),
         )
         for name, e in (raw.get("exporters") or {}).items()
     }
-    return Calibration(
+    cal = Calibration(
         fields=ef.get("fields", {}),
+        counters_index=ef.get("counters_index"),
+        counter_fields=dict(ef.get("counter_fields", {})),
         sampling_already_applied=ef.get("sampling_already_applied"),
         bytes_overhead_per_packet=int(ef.get("bytes_overhead_per_packet", 0)),
         ingest_lag_minutes=int(ef.get("ingest_lag_minutes", 0)),
         exporters=exporters,
         validated_on=_as_date(raw.get("validated_on")),
         reference=raw.get("reference"),
+        elastiflow_version=_text(ef.get("version")),
     )
+    logger.debug("load_calibration: sortie | {} exporteur(s)", len(exporters))
+    return cal
 
 
 def apply_calibration(cal: Calibration) -> None:
@@ -106,3 +178,6 @@ def apply_calibration(cal: Calibration) -> None:
     if cal.fields:
         configure_fields(cal.fields)
         logger.info("Champs ElastiFlow surchargés : {}", sorted(cal.fields))
+    if cal.counter_fields:
+        configure_counter_fields(cal.counter_fields)
+        logger.info("Champs de compteurs surchargés : {}", sorted(cal.counter_fields))

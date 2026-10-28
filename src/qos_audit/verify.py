@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from loguru import logger
+
 __all__ = ["compare_reports"]
 
 _ORDER = {"OK": 0, "INCONCLUSIVE": 1, "WARN": 2, "CRIT": 3}
@@ -21,6 +23,7 @@ def compare_reports(before: list[dict], after: list[dict]) -> list[dict]:
     def key(f: dict) -> tuple:
         return f["check"], f["subject"], f.get("direction")
 
+    logger.debug("compare_reports: entrée | {} avant / {} après", len(before), len(after))
     b = {key(f): f["severity"] for f in before}
     out = []
     for f in after:

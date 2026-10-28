@@ -17,9 +17,21 @@ from qos_audit.advisor.recommend import recommend
 from qos_audit.advisor.render_comware import render_marking_policy
 from qos_audit.calibration import Calibration, apply_calibration, default_calibration, load_calibration
 from qos_audit.checks import run_all
-from qos_audit.comware.extract import build_policy, load_devices, load_ifindex_map, policy_to_yaml, render_report
+from qos_audit.comware.extract import (
+    build_policy,
+    build_site_policies,
+    load_devices,
+    load_ifindex_map,
+    load_site_map,
+    policy_to_yaml,
+    render_report,
+    render_site_report,
+    site_policy_filename,
+)
+from qos_audit.comware.ssh_netmiko import TransportNetmiko
+from qos_audit.counters import ComwareCliCounters, CounterSource, interfaces_depuis_csv
 from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
-from qos_audit.policy import load_policy
+from qos_audit.policy import load_policies, load_policy
 from qos_audit.sampling import SamplingParams, expected_error_pct, recommended_sampling, worst_case_samples_per_s
 from qos_audit.verify import compare_reports
 
@@ -43,46 +55,76 @@ def _calibration(a: argparse.Namespace) -> Calibration:
 
 
 def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window]:
+    logger.debug("_setup: entrée | minutes={}", a.minutes)
     cal = _calibration(a)
     lag = a.ingest_lag_minutes if a.ingest_lag_minutes is not None else cal.ingest_lag_minutes
     client = ElastiflowClient(
         a.opensearch,
         scale_by_sampling=not cal.sampling_already_applied,
         bytes_overhead_per_packet=cal.bytes_overhead_per_packet,
+        counters_index=cal.counters_index,
     )
     client.check_fields()
-    return client, cal, _window(a.minutes, lag)
+    window = _window(a.minutes, lag)
+    logger.debug("_setup: sortie | fenêtre {}", window)
+    return client, cal, window
 
 
 def _audit(a: argparse.Namespace) -> int:
+    """Audit : une politique, ou celle de chaque site (dossier de ``extract --per-site``)."""
+    logger.debug("_audit: entrée | {} site={}", a.policy, a.site)
     try:
         client, cal, window = _setup(a)
     except SchemaError as exc:
         logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        logger.debug("_audit: sortie | 2")
         return 2
-    findings = run_all(client, load_policy(a.policy), window, only_site=a.site, cal=cal)
-    a.out.write_text(
-        json.dumps([asdict(f) | {"severity": f.severity.name} for f in findings], indent=2, default=str),
-        encoding="utf-8",
-    )
-    worst = max((f.severity for f in findings), default=0)
-    logger.info("{} constats, pire gravité = {}", len(findings), getattr(worst, "name", worst))
-    return _EXIT_CODE[int(worst)]
+    compteurs: CounterSource | None = None
+    if getattr(a, "comware_drops", None):
+        if not getattr(a, "comware_interfaces", None):
+            logger.error("--comware-drops exige --comware-interfaces (CSV exporter,ifindex,name)")
+            logger.debug("_audit: sortie | 2")
+            return 2
+        compteurs = ComwareCliCounters(
+            TransportNetmiko(),
+            interfaces_depuis_csv(a.comware_interfaces),
+            a.comware_drops,
+        )
+    rows: list[dict] = []
+    worst = 0
+    for policy in load_policies(a.policy, a.site):
+        for f in run_all(client, policy, window, counters=compteurs, only_site=a.site, cal=cal):
+            row = asdict(f) | {"severity": f.severity.name}
+            if row not in rows:  # constats globaux (calibration) répétés d'un site à l'autre
+                rows.append(row)
+                worst = max(worst, int(f.severity))
+    a.out.write_text(json.dumps(rows, indent=2, default=str), encoding="utf-8")
+    logger.info("{} constats, pire gravité = {}", len(rows), worst)
+    logger.debug("_audit: sortie | {}", _EXIT_CODE[worst])
+    return _EXIT_CODE[worst]
 
 
 def _advise(a: argparse.Namespace) -> int:
+    logger.debug("_advise: entrée | policy={}, site={}", a.policy, a.site)
+    policies = load_policies(a.policy, a.site)
+    if len(policies) > 1:
+        logger.error("advise sur un dossier de politiques par site : préciser --site")
+        logger.debug("_advise: sortie | 2")
+        return 2
+    policy = policies[0]
     try:
         client, _cal, window = _setup(a)
     except SchemaError as exc:
         logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        logger.debug("_advise: sortie | 2")
         return 2
-    policy = load_policy(a.policy)
     clusters = discover_unclassified(client, policy, window, only_site=a.site)
     recos = recommend(clusters, load_catalog(a.catalog), policy)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "recommandations.json").write_text(json.dumps([asdict(r) for r in recos], indent=2), encoding="utf-8")
     (a.out / "brouillon_comware.cfg").write_text(render_marking_policy(recos), encoding="utf-8")
     logger.info("{} recommandations écrites dans {}", len(recos), a.out)
+    logger.debug("_advise: sortie | 0")
     return 0
 
 
@@ -99,10 +141,24 @@ def _extract(a: argparse.Namespace) -> int:
     devices = load_devices(a.cfg, a.exporter)
     base = load_policy(a.base_policy) if a.base_policy else None
     ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
+    if a.per_site and base is None:
+        logger.error("--per-site demande --base-policy (sites et sorties du plan)")
+        logger.debug("_extract: sortie | 2")
+        return 2
     policy, ext = build_policy(devices, base, ifmap)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "policy.extracted.yaml").write_text(policy_to_yaml(policy, [d.source for d in devices]), encoding="utf-8")
-    (a.out / "extraction_report.md").write_text(render_report(ext, policy), encoding="utf-8")
+    report = render_report(ext, policy)
+    if a.per_site:
+        site_map = load_site_map(a.site_map) if a.site_map else None
+        sites, site_issues = build_site_policies(devices, base, ifmap, site_map)
+        for name, (site_policy, site_ext) in sites.items():
+            (a.out / site_policy_filename(name)).write_text(
+                policy_to_yaml(site_policy, [d.source for d in site_ext.devices]), encoding="utf-8"
+            )
+        report += render_site_report(sites, site_issues)
+        ext.issues += site_issues
+    (a.out / "extraction_report.md").write_text(report, encoding="utf-8")
     dump = {"devices": [asdict(d) for d in devices], "rules": [asdict(r) for r in ext.rules]}
     (a.out / "qos_extract.json").write_text(
         json.dumps(dump, indent=2, default=str, ensure_ascii=False), encoding="utf-8"
@@ -148,7 +204,7 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("audit", _audit), ("advise", _advise)):
         s = sub.add_parser(name)
-        s.add_argument("--policy", type=Path, required=True)
+        s.add_argument("--policy", type=Path, required=True, help="politique, ou dossier de extract --per-site")
         s.add_argument("--calibration", type=Path, help="calibration.yaml issue de la validation d'ElastiFlow")
         s.add_argument("--opensearch", nargs="+", default=["http://localhost:9200"])
         s.add_argument("--minutes", type=int, default=60)
@@ -157,6 +213,16 @@ def main() -> int:
         s.set_defaults(fn=fn)
         if name == "audit":
             s.add_argument("--out", type=Path, default=Path("qos_report.json"))
+            s.add_argument(
+                "--comware-drops",
+                type=Path,
+                help="active la collecte des drops par file en SSH Comware ; mémorise les relevés dans CE fichier JSON",
+            )
+            s.add_argument(
+                "--comware-interfaces",
+                type=Path,
+                help="CSV exporter,ifindex,name des sorties à interroger (exigé par --comware-drops)",
+            )
         else:
             s.add_argument("--catalog", type=Path, required=True)
             s.add_argument("--out", type=Path, default=Path("qos_advice"))
@@ -170,6 +236,8 @@ def main() -> int:
     ex.add_argument("--base-policy", type=Path, help="politique du plan (classes de l'opérateur) à compléter")
     ex.add_argument("--ifindex-map", type=Path, help="CSV exporter,ifindex,name")
     ex.add_argument("--exporter", help="nom d'exporteur ElastiFlow (un seul fichier ; défaut : sysname)")
+    ex.add_argument("--per-site", action="store_true", help="une politique par site (policy.<site>.yaml)")
+    ex.add_argument("--site-map", type=Path, help="CSV exporter,site (défaut : exporteurs des sorties)")
     ex.add_argument("--out", type=Path, default=Path("qos_extract"))
     ex.set_defaults(fn=_extract)
     sm = sub.add_parser("sampling", help="calcule le sampling recommandé")

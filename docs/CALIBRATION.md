@@ -19,11 +19,72 @@ Modèle : `calibrations/calibration.example.yaml`. Code : `src/qos_audit/calibra
 | P9 | Contrat opérateur | `policy.yaml` (classes, budgets) | `dscp_confirmed`, `max_share_pct` |
 | Signature | Verdict de la section 10 | `validated_on`, `reference` | `calibration` signale une calibration jamais validée ou vieille de plus de `calibration_max_age_days` |
 
+## Compteurs d'interface
+
+L'utilisation des sorties est calculée sur les counter samples sFlow (compteurs d'interface cumulés, toutes les
+30 s : mesure exacte, sans l'incertitude des flux échantillonnés). Deux clés de calibration les concernent, à
+relever sur un enregistrement de télémétrie de la version déployée :
+
+| Clé | Effet dans l'outil |
+|---|---|
+| `elastiflow.counters_index` | Pattern d'index des counter samples (défaut : `elastiflow-telemetry_flow-*`, nom ElastiFlow ≥ 6.2) |
+| `elastiflow.counter_fields` | Surcharge de `elastiflow.COUNTER_FIELDS` (`exporter`, `ifindex`, `bytes_in`, `bytes_out` ; défauts `netif.*`) |
+
+Sans compteurs exploitables (index absent, champs différents, couverture insuffisante), l'audit replie sur les
+flux et le signale (`utilization_source` à `flows` dans les constats). Le contrôle `counter_consistency` confronte
+les deux sources et alerte au-delà de `counter_consistency_max_dev_pct`.
+
 ## Risque principal
 
 Si `sampling_already_applied` est inconnu (`null`), l'outil suppose que le facteur n'est **pas** appliqué. Si
 ElastiFlow l'applique déjà, tous les volumes sont multipliés par N. Le contrôle `calibration` le signale en WARN tant
 que P6 n'est pas renseigné : ne pas exploiter les volumes avant.
+
+## Périmètre validé par exporteur
+
+Une validation porte sur un lien, un exporteur et une chaîne de collecte donnés (protocole de validation,
+§10.4). Chaque exporteur de `calibration.yaml` décrit son **état déployé** (`model`, `comware_version`,
+`sampling_direction`, `interfaces`, et `elastiflow.version` au niveau global) et, s'il a été validé, son
+**périmètre validé** dans un bloc `validation` relevé à la signature :
+
+| Clé | Contenu | Défaut |
+|---|---|---|
+| `validated_on` | Date de signature | `validated_on` global |
+| `model`, `comware_version` | Modèle et firmware testés | |
+| `elastiflow_version` | Version d'ElastiFlow testée | `elastiflow.version` |
+| `sampling_direction` | Sens d'échantillonnage testé | `inbound` |
+| `interface` | ifindex de l'interface de mesure | |
+| `sampling_rates` | Sampling-rates validés | (non contrôlé si vide) |
+
+Le contrôle `calibration` signale en WARN, pour chaque exporteur utilisé dans `policy.yaml` :
+
+| Situation | Revalidation indiquée |
+|---|---|
+| Pas de bloc `validation` et aucun exporteur validé de même modèle, même firmware, même version d'ElastiFlow, même sens et mêmes sampling-rates | (à valider) |
+| Bloc sans date | (à valider) |
+| Modèle différent du modèle validé | complète |
+| Firmware Comware ou version d'ElastiFlow changés depuis la validation | allégée |
+| Sens d'échantillonnage changé, ou sampling-rate configuré non validé | allégée |
+| Validation plus vieille que `calibration_max_age_days` | allégée |
+
+Un exporteur sans bloc `validation` est donc couvert par un autre exporteur validé configuré à l'identique
+(§10.4) : inutile de dupliquer le bloc sur chaque site du même modèle.
+
+## Revalidation allégée
+
+Après une mise à jour du firmware Comware, d'ElastiFlow ou de son stockage, ou un changement de sampling ou de
+sens (environ 2 h, sans arrêt de production) :
+
+1. Mettre à jour l'état déployé dans `calibration.yaml` (`comware_version`, `elastiflow.version`, interfaces) :
+   l'audit passe en WARN sur les exporteurs concernés.
+2. Rejouer P4 à P7 du protocole (champs, calibrage à 1:1, facteur d'échantillonnage, délai d'agrégation) et
+   reporter les écarts (`elastiflow.fields`, `bytes_overhead_per_packet`, `sampling_already_applied`,
+   `ingest_lag_minutes`).
+3. Rejouer A2 (justesse des volumes) sur l'interface de mesure.
+4. Si les résultats sont conformes, mettre à jour le bloc `validation` de l'exporteur testé (date, firmware,
+   version d'ElastiFlow, sampling-rates) et `validated_on` ; sinon, revalidation complète.
+
+Un nouveau modèle d'exporteur (ou une nouvelle famille Comware) demande une revalidation complète.
 
 ## Cycle de vie
 
@@ -32,7 +93,8 @@ que P6 n'est pas renseigné : ne pas exploiter les volumes avant.
 - Refaire au minimum P2, P4, P5 et P6 après une mise à jour d'ElastiFlow ou du firmware, et à chaque changement de
   sampling.
 - Renseigner un exporteur par équipement. Un exporteur utilisé dans `policy.yaml` mais absent de la calibration est signalé.
-- Limite : une validation sur un lien et un modèle ne vaut pas automatiquement pour les autres sites.
+- Limite : une validation sur un lien et un modèle ne vaut pas automatiquement pour les autres sites ; le
+  périmètre validé par exporteur (ci-dessus) rend la couverture de chaque site explicite.
 
 ## Exemple
 
@@ -43,9 +105,17 @@ que P6 n'est pas renseigné : ne pas exploiter les volumes avant.
       sampling_already_applied: true
       bytes_overhead_per_packet: 0
       ingest_lag_minutes: 5
+      version: "6.4.2"
     exporters:
       rtr-a-01:
+        model: MSR3620
+        comware_version: "7.1.064 R0821"
         sampling_direction: inbound
         counter_interval_s: 30
         interfaces:
           - {ifindex: 49, name: "WAN1", sampling_rate: 128}
+        validation:
+          model: MSR3620
+          comware_version: "7.1.064 R0821"
+          interface: 49
+          sampling_rates: [128]

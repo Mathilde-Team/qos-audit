@@ -1,2 +1,0 @@
-[console_scripts]
-qos-audit = qos_audit.cli:main
