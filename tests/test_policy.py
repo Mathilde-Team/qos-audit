@@ -37,13 +37,11 @@ def test_parse_acl() -> None:
 
 def test_parse_acl_mutualise_avec_extract() -> None:
     """#11 : wildcard → CIDR, gt/lt/neq, source-port, comme ``qos-audit extract``."""
-    texte = "\n".join(
-        [
-            "rule 0 permit udp source 10.1.0.0 0.0.255.255 destination 10.2.3.4 0 destination-port eq 5060",
-            "rule 5 permit tcp source-port gt 1023 destination-port lt 1024",
-            "rule 10 permit ip destination 192.168.0.0 0.0.0.255",
-            "description pas une règle",
-        ]
+    texte = (
+        "rule 0 permit udp source 10.1.0.0 0.0.255.255 destination 10.2.3.4 0 destination-port eq 5060\n"
+        "rule 5 permit tcp source-port gt 1023 destination-port lt 1024\n"
+        "rule 10 permit ip destination 192.168.0.0 0.0.0.255\n"
+        "description pas une règle"
     )
     r = parse_comware_acl(texte)
     sip = r[0]

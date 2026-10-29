@@ -12,6 +12,7 @@ sécurité sur le port 9200 :
 
 from __future__ import annotations
 
+import itertools
 import os
 import time
 from collections.abc import Iterator
@@ -204,7 +205,7 @@ def test_bytes_timeseries_buckets_d_une_minute_sur_60_min(url: str) -> None:
     assert len({r["ts"] for r in rows}) == 60
     assert len(rows) == 60 * len(DSCPS)
     assert all(r["samples"] == 1 and r["bytes"] == BYTES * SAMPLING for r in rows)
-    first = datetime.fromisoformat(min(r["ts"] for r in rows).replace("Z", "+00:00"))
+    first = datetime.fromisoformat(min(r["ts"] for r in rows))
     assert first == T0
 
 
@@ -222,6 +223,6 @@ def test_counter_samples_tries_avec_le_releve_precedent(url: str) -> None:
     # 120 relevés dans l'heure + 3 dans la marge de 90 s avant le début.
     assert len(rows) == 123
     assert rows[0]["ts"] == start - timedelta(seconds=90)
-    assert all(a["ts"] < b["ts"] for a, b in zip(rows, rows[1:], strict=False))
+    assert all(a["ts"] < b["ts"] for a, b in itertools.pairwise(rows))
     assert rows[1]["out"] - rows[0]["out"] == OUT_BYTES_PER_STEP
     assert _client(url).counter_samples(EXPORTER, OTHER_IF, w) == []

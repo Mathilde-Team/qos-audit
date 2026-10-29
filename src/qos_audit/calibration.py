@@ -124,7 +124,8 @@ def _validation(name: str, raw: object, defaults: dict) -> Validation | None:
         return None
     if not isinstance(raw, dict):
         logger.debug("_validation: sortie | {} bloc invalide", name)
-        raise ValueError(f"calibration : exporters.{name}.validation doit être un dictionnaire")
+        # ValueError, pas TypeError : contrat de load_calibration (fichier de calibration mal formé).
+        raise ValueError(f"calibration : exporters.{name}.validation doit être un dictionnaire")  # noqa: TRY004
     rates = raw.get("sampling_rates") or ()
     v = Validation(
         validated_on=_as_date(raw.get("validated_on", defaults["validated_on"])),
