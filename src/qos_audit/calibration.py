@@ -133,7 +133,8 @@ def _cv(value: object) -> float | None:
         return None
     if isinstance(value, bool):
         logger.debug("_cv: sortie | booléen refusé")
-        raise ValueError("calibration : bytes_error_cv doit être un nombre, pas un booléen")
+        # ValueError, pas TypeError : contrat de load_calibration (fichier de calibration mal formé).
+        raise ValueError("calibration : bytes_error_cv doit être un nombre, pas un booléen")  # noqa: TRY004
     try:
         cv = float(value)
     except (TypeError, ValueError) as exc:

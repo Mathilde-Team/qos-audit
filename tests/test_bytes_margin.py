@@ -8,12 +8,12 @@ est porté dans ``calibration.yaml`` (``elastiflow.bytes_error_cv``) et remplace
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-import qos_audit.checks as checks
+from qos_audit import checks
 from qos_audit.calibration import Calibration, load_calibration, margin_from_cv
 from qos_audit.checks import _finding, apply_bytes_margin, check_bytes_margin, run_all
 from qos_audit.elastiflow import Window
@@ -21,7 +21,7 @@ from qos_audit.models import Severity, rel_error_pct
 from qos_audit.policy import load_policy
 
 ROOT = Path(__file__).parent.parent
-T0 = datetime(2026, 10, 26, 8, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 26, 8, tzinfo=UTC)
 W = Window(T0, T0 + timedelta(minutes=60))
 
 # Mélange réaliste : 50 % de 64 o (ACK), 20 % de 576 o, 30 % de 1500 o (MTU), en nombre de paquets.
