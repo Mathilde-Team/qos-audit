@@ -358,3 +358,28 @@ def test_ligne_de_serie_a_horodatage_illisible_ignoree() -> None:
     sat = [x for x in f if x.check == "saturation" and x.direction == "egress" and x.subject.endswith("wan1")]
     assert sat[0].evidence["utilization_source"] == "flows"
     assert sat[0].evidence["buckets"] == 5
+
+
+def test_overflow_budget_care_car_bps() -> None:
+    """Le ``car cir`` configuré plafonne le budget effectif de la classe (min avec max_share_pct)."""
+    from dataclasses import replace
+
+    p = load_policy(ROOT / "policies" / "policy.example.yaml")
+    p.classes = [replace(c, car_bps=50_000_000) if c.name == "ef" else c for c in p.classes]
+    # 1e9 octets/min ~ 133 Mbit/s d'EF : au-dessus du car (50 M) comme au-dessus de 45 % de 200 M (90 M)
+    series = [{"ts": f"2026-10-24T10:{i:02d}:00Z", "dscp": 46, "bytes": 1e9, "samples": 200} for i in range(5)]
+    f = check_saturation_and_overflow(FakeClient([], series), p, W)
+    ov = [x for x in f if x.check == "class_overflow" and x.subject.endswith("wan1/ef") and x.direction == "egress"]
+    assert ov and ov[0].severity == Severity.WARN
+
+
+def test_overflow_car_bps_seul_quand_pas_de_part() -> None:
+    """Une classe sans ``max_share_pct`` mais avec un ``car`` est quand même évaluée."""
+    from dataclasses import replace
+
+    p = load_policy(ROOT / "policies" / "policy.example.yaml")
+    p.classes = [replace(c, car_bps=50_000_000, max_share_pct=None) if c.name == "ef" else c for c in p.classes]
+    series = [{"ts": f"2026-10-24T10:{i:02d}:00Z", "dscp": 46, "bytes": 1e9, "samples": 200} for i in range(5)]
+    f = check_saturation_and_overflow(FakeClient([], series), p, W)
+    ov = [x for x in f if x.check == "class_overflow" and x.subject.endswith("wan1/ef") and x.direction == "egress"]
+    assert ov and ov[0].severity == Severity.WARN

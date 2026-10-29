@@ -58,6 +58,7 @@ thresholds:
   unknown_dscp_max_pct: 1
   secours_active_max_pct: 5
   bytes_error_margin: 1.25     # facteur sur l'erreur pour des octets de tailles variables (trafic réel)
+  encapsulated_inconclusive_pct: 50        # part du trafic encapsulé au-delà : audit non concluant (#30)
   sampling_floor_ratio: 0.05   # plancher à mesurer : 5 % de la capacité de la sortie
   sampling_window_s: 300       # fenêtre d'analyse du dimensionnement
   sampling_size_bytes: 1500    # paquet de référence pour la précision

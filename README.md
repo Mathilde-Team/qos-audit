@@ -5,6 +5,10 @@ de l'opérateur) est confrontée aux **mesures sFlow** collectées par ElastiFlo
 Une **extraction** produit la politique théorique depuis les configurations Comware. Un moteur de **recommandation** propose des reclassements et génère un brouillon de configuration Comware.
 Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fiabilise l'instrument de mesure.
 
+**Périmètre.** Les Comware ne font que marquer ; la priorisation est faite par les routeurs de l'opérateur, hors d'accès.
+Le sFlow est pris sur le site distant : l'outil compare le marquage des paquets à l'arrivée à la QoS théorique. Il ne
+mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
+
 ## Commandes
 
 | Commande | Rôle |
@@ -57,5 +61,11 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 Le job CI « Qualité (lint, tests) » applique les mêmes contrôles ; le seuil de couverture (lignes et branches)
 est lu dans `pyproject.toml`.
+
+Les tests d'intégration (`tests/test_integration_opensearch.py`, #17) rejouent les requêtes du client ElastiFlow
+contre un vrai OpenSearch ; ils sont exclus de `make test` et tournent dans le job CI « Intégration OpenSearch »
+(non bloquant). En local, avec un OpenSearch sans sécurité sur le port 9200 :
+
+    OPENSEARCH_URL=http://localhost:9200 uv run pytest -m integration tests/test_integration_opensearch.py
 
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.

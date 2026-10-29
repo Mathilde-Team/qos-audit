@@ -8,7 +8,7 @@
     cfg Comware ─────► comware/ (parser, convert, extract) ──► policy.extracted.yaml + rapport
                                           │
     ElastiFlow (OpenSearch) ◄── elastiflow.py   agrégations de flux + counter samples d'interface (compteurs exacts)
-    Compteurs Comware/SNMP  ◄── counters.py     débits d'interface (sFlow) + drops par file (optionnel, preuve directe)
+    Compteurs d'interface   ◄── counters.py     débits exacts d'interface (counter samples sFlow)
                                           │
                        checks.py ──► Finding[] ──► rapport JSON ──► verify.py (avant/après)
                        sampling.py ─► sampling recommandé, erreur attendue, coût
@@ -24,7 +24,7 @@
 | `sampling.py` | `recommended_sampling`, `expected_error_pct`, `worst_case_samples_per_s`, `samples_needed` |
 | `elastiflow.py` | `FIELDS`/`COUNTER_FIELDS` (surchargeables), `configure_fields`/`configure_counter_fields`, `exit_filter`, `bytes_by` (paginé), `bytes_timeseries`, `counter_samples` (index de télémétrie), base de comptage |
 | `checks.py` | Contrôles par site/sortie/sens, `run_all` ; saturation/class_overflow sur les compteurs avec repli signalé, `counter_consistency` |
-| `counters.py` | `rates_from_counters` (débits exacts : resets, rebouclage 32 bits, couverture) ; interface `CounterSource` (drops par file) ; implémentation Comware à écrire |
+| `counters.py` | `rates_from_counters` (débits exacts : resets, rebouclage 32 bits, couverture) |
 | `comware/` | `parser` (blocs, ACL, object-groups, classifiers, behaviors, policies, interfaces), `convert` (wildcard, ports, DSCP), `extract` (règles de marquage, politique, rapport) |
 | `advisor/` | `catalog`, `discover`, `recommend`, `simulate`, `render_comware` |
 | `verify.py` | Comparaison de deux rapports |
