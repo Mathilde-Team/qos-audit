@@ -212,16 +212,16 @@ def test_bytes_by_une_page() -> None:
         "aggregations": {
             "g": {
                 "buckets": [
-                    {"key": {"dscp": 46}, "b": {"value": 1.5e9}, "doc_count": 200},
-                    {"key": {"dscp": 0}, "b": {"value": 2.5e9}, "doc_count": 300},
+                    {"key": {"dscp": 46}, "b": {"value": 1.5e9}, "q": {"value": 1.125e16}, "doc_count": 200},
+                    {"key": {"dscp": 0}, "b": {"value": 2.5e9}, "q": {"value": 2.083e16}, "doc_count": 300},
                 ]
             }
         }
     }
     rows = c.bytes_by(W, ["dscp"])
     assert rows == [
-        {"dscp": 46, "bytes": 1.5e9, "samples": 200},
-        {"dscp": 0, "bytes": 2.5e9, "samples": 300},
+        {"dscp": 46, "bytes": 1.5e9, "bytes_sq": 1.125e16, "samples": 200},
+        {"dscp": 0, "bytes": 2.5e9, "bytes_sq": 2.083e16, "samples": 300},
     ]
     # Corps de requête : fenêtre + agrégation composite sur les champs demandés.
     body = os_mock.search.call_args.kwargs["body"]
@@ -235,10 +235,17 @@ def test_bytes_by_pagination_s_arrete_sans_after_key() -> None:
     os_mock.search.side_effect = [
         {
             "aggregations": {
-                "g": {"buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0}, "doc_count": 1}], "after_key": {"dscp": 0}}
+                "g": {
+                    "buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0}, "q": {"value": 1.0}, "doc_count": 1}],
+                    "after_key": {"dscp": 0},
+                }
             }
         },
-        {"aggregations": {"g": {"buckets": [{"key": {"dscp": 46}, "b": {"value": 2.0}, "doc_count": 2}]}}},
+        {
+            "aggregations": {
+                "g": {"buckets": [{"key": {"dscp": 46}, "b": {"value": 2.0}, "q": {"value": 2.0}, "doc_count": 2}]}
+            }
+        },
     ]
     rows = c.bytes_by(W, ["dscp"])
     assert len(rows) == 2
@@ -251,7 +258,10 @@ def test_bytes_by_pagination_tronquee_previent() -> None:
     c, os_mock = _flow_client()
     os_mock.search.return_value = {
         "aggregations": {
-            "g": {"buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0}, "doc_count": 1}], "after_key": {"dscp": 0}}
+            "g": {
+                "buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0}, "q": {"value": 1.0}, "doc_count": 1}],
+                "after_key": {"dscp": 0},
+            }
         }
     }
     rows = c.bytes_by(W, ["dscp"], max_pages=2)
