@@ -8,6 +8,7 @@ adéquation du sampling, santé de la calibration.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime
 
 from loguru import logger
@@ -35,6 +36,8 @@ from qos_audit.sampling import (
 )
 
 __all__ = [
+    "apply_bytes_margin",
+    "check_bytes_margin",
     "check_calibration",
     "check_counter_consistency",
     "check_encapsulated_traffic",
@@ -1227,6 +1230,72 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     return result
 
 
+def apply_bytes_margin(p: Policy, cal: Calibration) -> Policy:
+    """Politique dont la marge sur les octets est celle mesurée par la validation, si elle l'est (#33).
+
+    Le CV des tailles de paquets mesuré sur les séries B et C (``elastiflow.bytes_error_cv``) remplace
+    l'hypothèse ``bytes_error_margin`` de la politique (1,25 par défaut) : la mesure prime sur l'hypothèse,
+    qui ne sert plus que de repli tant que le CV n'est pas mesuré.
+
+    Args:
+        p: Politique théorique.
+        cal: Calibration.
+
+    Returns:
+        La politique d'origine si le CV n'est pas mesuré, sinon une copie avec la marge mesurée.
+    """
+    logger.debug("apply_bytes_margin: entrée | cv={}", cal.bytes_error_cv)
+    margin = cal.bytes_error_margin()
+    if margin is None:
+        logger.debug("apply_bytes_margin: sortie | marge de la politique conservée")
+        return p
+    logger.info(
+        "Marge sur les octets : {:.3f} mesurée (CV {:g}) au lieu de {:g} (politique)",
+        margin,
+        cal.bytes_error_cv,
+        p.thresholds["bytes_error_margin"],
+    )
+    out = replace(p, thresholds={**p.thresholds, "bytes_error_margin": margin})
+    logger.debug("apply_bytes_margin: sortie | marge {:.3f}", margin)
+    return out
+
+
+def check_bytes_margin(p: Policy, cal: Calibration) -> list[Finding]:
+    """Origine de la marge appliquée à l'incertitude des octets : mesurée (séries B et C) ou supposée (#33).
+
+    Args:
+        p: Politique, marge déjà résolue par :func:`apply_bytes_margin`.
+        cal: Calibration.
+
+    Returns:
+        Un constat informatif (OK) : la gravité d'une calibration non signée est portée par ``check_calibration``.
+    """
+    logger.debug("check_bytes_margin: entrée | cv={}", cal.bytes_error_cv)
+    margin = p.thresholds["bytes_error_margin"]
+    evidence = {"bytes_error_margin": round(margin, 3), "bytes_error_cv": cal.bytes_error_cv}
+    if cal.bytes_error_cv is None:
+        f = _finding(
+            p,
+            "bytes_error_margin",
+            Severity.OK,
+            "elastiflow",
+            f"marge sur les octets supposée ({margin:g}, politique) : CV des tailles de paquets non mesuré "
+            "(séries B et C, elastiflow.bytes_error_cv)",
+            evidence=evidence,
+        )
+    else:
+        f = _finding(
+            p,
+            "bytes_error_margin",
+            Severity.OK,
+            "elastiflow",
+            f"marge sur les octets mesurée : {margin:.2f} (CV {cal.bytes_error_cv:g}, séries B et C)",
+            evidence=evidence,
+        )
+    logger.debug("check_bytes_margin: sortie | {}", f.severity.name)
+    return [f]
+
+
 def run_all(
     c: ElastiflowClient,
     p: Policy,
@@ -1250,6 +1319,8 @@ def run_all(
     """
     logger.debug("run_all: entrée | sites={} site={} calibration={}", len(p.sites), only_site, cal is not None)
     counters = counters or NullCounters()
+    if cal is not None:
+        p = apply_bytes_margin(p, cal)
     findings: list[Finding] = []
     findings += check_marking_conformity(c, p, w, only_site)
     findings += check_dscp_plan(c, p, w, only_site)
@@ -1264,6 +1335,7 @@ def run_all(
     findings += check_sampling_adequacy(c, p, w, only_site)
     if cal is not None:
         findings += check_calibration(p, cal)
+        findings += check_bytes_margin(p, cal)
         findings += check_sampling_drift(c, p, w, cal)
     logger.debug("run_all: sortie | {} constat(s)", len(findings))
     return findings
