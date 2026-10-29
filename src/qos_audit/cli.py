@@ -1,4 +1,4 @@
-"""Point d'entrée : ``audit``, ``advise``, ``compare``, ``sampling``, ``extract`` (QoS depuis les configurations)."""
+"""Point d'entrée : ``audit``, ``advise``, ``compare``, ``sampling``, ``extract``, ``sflow``, ``sondes``."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ from qos_audit.counters import ComwareCliCounters, CounterSource, interfaces_dep
 from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
 from qos_audit.models import Finding, Severity
 from qos_audit.policy import load_policies, load_policy
+from qos_audit.probes import ProbeResult, check_probes, load_probes
 from qos_audit.sampling import SamplingParams, expected_error_pct, recommended_sampling, worst_case_samples_per_s
 from qos_audit.sflow import load_configs, render_calibration_yaml, sflow_findings, to_calibration_section
 from qos_audit.verify import compare_reports
@@ -77,9 +78,47 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
     return client, cal, window
 
 
+def _sondes(path: Path) -> list[ProbeResult]:
+    """Lit ``sondes.csv`` en entier : la série S couvre des jours, pas la seule fenêtre de l'audit."""
+    logger.debug("_sondes: entrée | {}", path)
+    sondes = load_probes(path)
+    logger.info("{} mesure(s) de sondes lues dans {}", len(sondes), path)
+    logger.debug("_sondes: sortie | {}", len(sondes))
+    return sondes
+
+
+def _probes(a: argparse.Namespace) -> int:
+    """Contrôle des sondes actives par classe, sans OpenSearch (#29)."""
+    logger.debug("_probes: entrée | {} site={}", a.sondes, a.site)
+    try:
+        sondes = _sondes(a.sondes)
+    except ValueError as exc:
+        logger.error("sondes.csv illisible : {}", exc)
+        logger.debug("_probes: sortie | 2")
+        return 2
+    rows: list[dict] = []
+    worst = 0
+    for policy in load_policies(a.policy, a.site):
+        for f in check_probes(sondes, policy, a.site):
+            row = asdict(f) | {"severity": f.severity.name}
+            if row not in rows:
+                rows.append(row)
+                worst = max(worst, int(f.severity))
+    a.out.write_text(json.dumps(rows, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
+    logger.info("{} constat(s) de sondes, pire gravité = {}", len(rows), worst)
+    logger.debug("_probes: sortie | {}", _EXIT_CODE[worst])
+    return _EXIT_CODE[worst]
+
+
 def _audit(a: argparse.Namespace) -> int:
     """Audit : une politique, ou celle de chaque site (dossier de ``extract --per-site``)."""
     logger.debug("_audit: entrée | {} site={}", a.policy, a.site)
+    try:
+        sondes = _sondes(a.sondes) if getattr(a, "sondes", None) else None
+    except ValueError as exc:
+        logger.error("sondes.csv illisible : {}", exc)
+        logger.debug("_audit: sortie | 2")
+        return 2
     try:
         client, cal, window = _setup(a)
     except SchemaError as exc:
@@ -100,7 +139,10 @@ def _audit(a: argparse.Namespace) -> int:
     rows: list[dict] = []
     worst = 0
     for policy in load_policies(a.policy, a.site):
-        for f in run_all(client, policy, window, counters=compteurs, only_site=a.site, cal=cal):
+        findings = run_all(client, policy, window, counters=compteurs, only_site=a.site, cal=cal)
+        if sondes is not None:
+            findings += check_probes(sondes, policy, a.site)
+        for f in findings:
             row = asdict(f) | {"severity": f.severity.name}
             if row not in rows:  # constats globaux (calibration) répétés d'un site à l'autre
                 rows.append(row)
@@ -264,6 +306,7 @@ def main() -> int:
                 type=Path,
                 help="CSV exporter,ifindex,name des sorties à interroger (exigé par --comware-drops)",
             )
+            s.add_argument("--sondes", type=Path, help="sondes.csv de la série S (Elastiflow-Validation §8.8, #29)")
         else:
             s.add_argument("--catalog", type=Path, required=True)
             s.add_argument("--out", type=Path, default=Path("qos_advice"))
@@ -297,6 +340,12 @@ def main() -> int:
     sf.add_argument("--ifindex-map", type=Path, help="CSV exporter,ifindex,name")
     sf.add_argument("--out", type=Path, help="fichier YAML de sortie (défaut : sortie standard)")
     sf.set_defaults(fn=_sflow)
+    so = sub.add_parser("sondes", help="priorisation vue par les sondes actives par classe (#29)")
+    so.add_argument("--policy", type=Path, required=True, help="politique, ou dossier de extract --per-site")
+    so.add_argument("--sondes", type=Path, required=True, help="sondes.csv de la série S (Elastiflow-Validation)")
+    so.add_argument("--site")
+    so.add_argument("--out", type=Path, default=Path("qos_sondes.json"))
+    so.set_defaults(fn=_probes)
     a = ap.parse_args()
     logger.debug("main: entrée | sous-commande={}", a.cmd)
     code = a.fn(a)

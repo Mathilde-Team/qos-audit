@@ -13,6 +13,7 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 | `qos-audit advise` | Découverte des flux non classifiés, recommandations d'après le catalogue validé, brouillon de config Comware. |
 | `qos-audit compare` | Compare deux rapports d'audit (avant/après un changement). |
 | `qos-audit sampling` | Calcule le sampling recommandé par débit de lien ou par sortie, et l'erreur attendue. |
+| `qos-audit sondes` | Priorisation vue par les sondes actives par classe (`sondes.csv` de la série S d'Elastiflow-Validation) : priorisation inversée, congestion hors QoS. Aussi `audit --sondes`. Sans OpenSearch. |
 | `qos-audit extract` | Extrait la QoS théorique (ACL + marquage) des configurations Comware : `policy.extracted.yaml` et rapport. |
 
 ## Démarrage
@@ -25,6 +26,7 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
     qos-audit advise --policy policies/policy.example.yaml --catalog catalogs/catalog.example.yaml \
                      --calibration calibrations/calibration.example.yaml --opensearch http://es:9200
     qos-audit compare avant.json apres.json
+    qos-audit sondes --policy policies/policy.example.yaml --sondes sondes.csv [--site site-a] --out qos_sondes.json
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --ifindex-map configs/ifindex.csv --out qos_extract/
     # une politique par site (policy.<site>.yaml), puis audit de chaque site avec sa politique
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
