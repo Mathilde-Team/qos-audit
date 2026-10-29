@@ -13,7 +13,7 @@ from datetime import date, datetime
 from loguru import logger
 
 from qos_audit.calibration import Calibration, ExporterCal, Validation
-from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
+from qos_audit.counters import InterfaceRates, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import (
     Direction,
@@ -609,10 +609,8 @@ def check_saturation_and_overflow(
     return out
 
 
-def check_congestion(
-    c: ElastiflowClient, p: Policy, w: Window, counters: CounterSource, only_site: str | None = None
-) -> list[Finding]:
-    """Indices de congestion : marques ECN CE (indirect) et drops par file (preuve directe, si source branchée)."""
+def check_congestion(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """Indice indirect de congestion : marques ECN CE vues en sortie."""
     logger.debug("check_congestion: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
@@ -631,31 +629,6 @@ def check_congestion(
                 site=site,
                 direction="egress",
                 samples=samples,
-            )
-        )
-        try:
-            drops = counters.queue_drops(ex.exporter, ex.ifindex, w)
-        except NotImplementedError:
-            logger.debug("Source de compteurs non implémentée pour {}", ex.exporter)
-            continue
-        if drops is None:
-            continue
-        lost = sum(drops.par_file.values())
-        out.append(
-            _finding(
-                p,
-                "congestion_drops",
-                Severity.CRIT if lost else Severity.OK,
-                f"{site.name}/{ex.name}",
-                f"{lost} paquets droppés entre {drops.depuis:%d/%m %H:%M} et "
-                f"{drops.jusqu_a:%d/%m %H:%M} UTC (intervalle d'observation contenant la fenêtre)",
-                site=site,
-                direction="egress",
-                evidence={
-                    "par_file": drops.par_file,
-                    "depuis": drops.depuis.isoformat(),
-                    "jusqu_a": drops.jusqu_a.isoformat(),
-                },
             )
         )
     logger.debug("check_congestion: sortie | {} constat(s)", len(out))
@@ -1231,7 +1204,6 @@ def run_all(
     c: ElastiflowClient,
     p: Policy,
     w: Window,
-    counters: CounterSource | None = None,
     only_site: str | None = None,
     cal: Calibration | None = None,
 ) -> list[Finding]:
@@ -1241,7 +1213,6 @@ def run_all(
         c: Client ElastiFlow.
         p: Politique théorique.
         w: Fenêtre d'analyse.
-        counters: Source de compteurs de drops (optionnelle).
         only_site: Restreint l'audit à un site.
         cal: Calibration issue de la validation ElastiFlow (optionnelle).
 
@@ -1249,7 +1220,6 @@ def run_all(
         Liste des constats.
     """
     logger.debug("run_all: entrée | sites={} site={} calibration={}", len(p.sites), only_site, cal is not None)
-    counters = counters or NullCounters()
     findings: list[Finding] = []
     findings += check_marking_conformity(c, p, w, only_site)
     findings += check_dscp_plan(c, p, w, only_site)
@@ -1258,7 +1228,7 @@ def run_all(
     findings += check_port_ranges(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
-    findings += check_congestion(c, p, w, counters, only_site)
+    findings += check_congestion(c, p, w, only_site)
     findings += check_exit_balance(c, p, w, only_site)
     findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)

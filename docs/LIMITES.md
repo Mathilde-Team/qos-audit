@@ -3,23 +3,16 @@
 ## Ce que l'outil prouve
 
 La **conformité du marquage observé** et la **charge offerte par classe**, à l'échelle du site et de la sortie.
+Le sFlow est pris sur le **site distant**, à l'arrivée : le DSCP mesuré est celui reçu après la traversée du réseau de
+l'opérateur, comparé au marquage théorique (ACL + marquage des Comware). Un écart peut venir d'un mauvais marquage au
+départ ou d'un remarquage par l'opérateur : l'outil ne sait pas les distinguer.
 
 ## Ce qu'il ne prouve pas
 
-1. **Que la priorisation fonctionne.** sFlow ne voit ni files ni drops. Preuve directe : compteurs Comware
-   ou SNMP (`counters.py`). La collecte CLI Comware est implémentée (`ComwareCliCounters`, issue #10) :
-   les drops ne se mesurent qu'entre **deux** exécutions d'audit — la première pose la référence —
-   et uniquement si la fenêtre d'analyse est entièrement comprise entre les deux relevés (exécutions plus
-   rapprochées que la fenêtre + le délai d'ingestion ⇒ aucun delta, jamais proratisé). Le delta
-   appartient à l'**intervalle d'observation** [premier relevé, second relevé], qui contient la
-   fenêtre mais peut la déborder : le rapport présente cet intervalle, des drops survenus hors
-   fenêtre y sont inclus. Certaines versions (5130) n'exposent pas les drops par file : sortie non
-   mesurable, pas de zéro inventé.
-2. **La qualité vécue** (latence, jitter, perte) du trafic réel. Les sondes actives par classe (série S
-   d'Elastiflow-Validation, contrôle `probe_priority`, #29) mesurent celle d'un flux léger dans le profil, toutes les
-   15 minutes : elles révèlent une priorisation inversée, pas la qualité d'un appel donné. La lecture RTCP/HEP de la
-   voix réelle (OxoHepBridge) reste à faire. Les seuils `probe_*` sont communs à toutes les classes : à aligner sur le
-   contrat de l'opérateur.
+1. **Que la priorisation fonctionne.** Les Comware ne font que **marquer**. La priorisation est faite par les routeurs
+   de l'opérateur, auxquels il n'y a pas accès. sFlow ne voit ni files ni drops : l'outil ne mesure pas la
+   priorisation (périmètre recentré par #78, qui retire la collecte des drops par file et les sondes actives).
+2. **La qualité vécue** (latence, gigue, perte) du trafic réel : hors périmètre.
 3. **Ce qui se passe dans le LAN**, hors des sorties instrumentées.
 
 ## Incertitude d'échantillonnage

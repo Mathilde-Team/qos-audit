@@ -25,10 +25,6 @@
   ],
   "interdits": [
     {
-      "check": "congestion_drops",
-      "severity": "CRIT"
-    },
-    {
       "check": "dscp_plan",
       "severity": "CRIT"
     }

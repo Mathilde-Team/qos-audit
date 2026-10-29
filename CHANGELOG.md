@@ -7,6 +7,14 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+### Retiré
+- Recentrage sur le marquage (#78) : les Comware ne font que marquer, la priorisation est faite par les routeurs de
+  l'opérateur (hors d'accès) et le sFlow est pris sur le site distant. Sont retirés : la collecte SSH des drops par file
+  Comware (#10 : `ComwareCliCounters`, `comware/queue_stats.py`, `comware/ssh_netmiko.py`, `audit --comware-drops`,
+  extra `comware`/netmiko, constat `congestion_drops`), les sondes actives (#29 : `probes.py`, commande `sondes`,
+  `audit --sondes`, constat `probe_priority`, seuils `probe_*`), le traitement du double comptage (#26, annule la PR
+  #77) et la marge sur les octets calibrée (#33, annule la PR #74).
+
 ### Ajouté
 - Sondes actives par classe (#29) : `qos-audit sondes` (et `audit --sondes`) lit `sondes.csv` de la série S
   d'Elastiflow-Validation (§8.8) et produit un constat `probe_priority` par sortie. Sur une même passe, une classe

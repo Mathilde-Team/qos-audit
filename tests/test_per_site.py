@@ -184,7 +184,7 @@ def _faux_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *args: str) -> 
     """Lance ``audit`` sans OpenSearch : ``run_all`` renvoie un constat par site et un constat global."""
     vus: list = []
 
-    def run_all(_client, policy, _window, counters=None, only_site=None, cal=None):
+    def run_all(_client, policy, _window, only_site=None, cal=None):
         vus.append(([s.name for s in policy.sites], only_site))
         site = policy.sites[0].name
         return [
