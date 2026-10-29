@@ -1,0 +1,36 @@
+{
+  "attendus": [
+    {
+      "check": "trust",
+      "subject": "sw-acc-01:if10",
+      "severity": "CRIT",
+      "message_contains": "DSCP 46"
+    },
+    {
+      "check": "marking",
+      "subject": "site-a/wan1/ef",
+      "severity": "CRIT"
+    },
+    {
+      "check": "calibration",
+      "severity": "WARN",
+      "message_contains": "jamais validée"
+    },
+    {
+      "check": "sampling_drift",
+      "subject": "rtr-a-01:if49",
+      "severity": "INCONCLUSIVE",
+      "message_contains": "aucun échantillon reçu"
+    }
+  ],
+  "interdits": [
+    {
+      "check": "congestion_drops",
+      "severity": "CRIT"
+    },
+    {
+      "check": "dscp_plan",
+      "severity": "CRIT"
+    }
+  ]
+}
