@@ -38,7 +38,7 @@ mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
 
 1. Dérouler la phase 0 de la validation d'ElastiFlow et renseigner `calibration.yaml` (champs, facteur d'échantillonnage,
    base de comptage, délai d'ingestion). Tant qu'il est incomplet, l'audit le signale.
-2. Renseigner `capacity_bps` (débit contractuel) pour chaque sortie : l'utilisation et le sampling se calculent sur la capacité.
+2. Renseigner `capacity_bps` (débit contractuel) pour chaque sortie : l'utilisation et le sampling se calculent sur la capacité. Le contrôle `capacity` signale une sortie sans capacité, ou dont la capacité vaut la vitesse du port (#13).
 3. Confirmer auprès de l'opérateur la correspondance des classes D1, D2 et D3 (`dscp_confirmed: false` dans l'exemple).
 4. Lire `docs/LIMITES.md` : sFlow est statistique et ne voit ni les files ni les drops.
 
