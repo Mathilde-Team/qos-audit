@@ -7,10 +7,10 @@ non-régression tant que les rapports réels du lab (#36) ne sont pas archivés.
 
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -36,7 +36,7 @@ from qos_audit.models import Severity
 from qos_audit.policy import load_policy
 
 ROOT = Path(__file__).parent.parent
-T0 = datetime(2026, 10, 26, 8, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 26, 8, tzinfo=UTC)
 W = Window(T0, T0 + timedelta(minutes=60))
 
 
