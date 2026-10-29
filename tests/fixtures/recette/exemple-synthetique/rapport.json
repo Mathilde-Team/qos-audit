@@ -3,7 +3,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan1/ef",
-    "message": "10.0% conforme",
+    "message": "10.0% conforme — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -28,7 +28,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan1/d1",
-    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur)",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -53,7 +53,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan1/d1",
-    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur)",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -78,7 +78,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan1/d2",
-    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur)",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -103,7 +103,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan2/ef",
-    "message": "10.0% conforme",
+    "message": "10.0% conforme — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -128,7 +128,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan2/d1",
-    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur)",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -153,7 +153,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan2/d1",
-    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur)",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {
@@ -178,7 +178,7 @@
     "check": "marking",
     "severity": "CRIT",
     "subject": "site-a/wan2/d2",
-    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur)",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
     "evidence": {
       "dscp_seen": [
         {

@@ -32,7 +32,7 @@ Les petits flux et les voix courtes sont mal représentés avec un taux de 1/100
 
 - **Capacité ≠ vitesse du port.** Un port de 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200. Renseigner `capacity_bps`.
 - **Microbursts** invisibles : buckets d'une minute par défaut (`Window.bucket`).
-- **Point de mesure** : l'échantillonnage en sortie n'est pas supporté de la même façon selon le modèle et la version de Comware (à vérifier). Le DSCP vu dépend du moment de l'échantillonnage (avant ou après la politique de sortie).
+- **Point de mesure** : le sFlow est pris sur le **site distant**, à l'arrivée (décision du propriétaire, 29/10/2026, issue #31). Le DSCP mesuré est celui reçu après la traversée du réseau opérateur : la question « avant ou après la politique de sortie du Comware » ne se pose pas, et il n'y a pas de champ `dscp_seen` à ajouter. Un écart au contrôle `marking` garde son ambiguïté (mauvais marquage au départ ou remarquage opérateur) — c'est écrit dans le constat.
 - **Tunnels et chiffrement** : après IPsec, GRE ou SD-WAN, seuls l'en-tête externe et son DSCP sont visibles. Les ACL par ports ne s'appliquent plus. Le contrôle `encapsulated` (#30) mesure la part de trafic encapsulé par sortie (protocoles IP 47/50, UDP 500/4500, ports SD-WAN documentés) : majorité = audit non concluant, mesurer avant le tunnel ; `encapsulated_dscp` observe le DSCP externe (la copie du DSCP interne ne se vérifie pas depuis l'extérieur).
 - **Asymétrie et multi-sorties** : l'aller et le retour peuvent emprunter des sorties différentes ; raisonner par site et par sens.
 - **ACL par plages de ports** : une plage RTP attrape aussi des ports éphémères. Préférer IP serveur + ports.
