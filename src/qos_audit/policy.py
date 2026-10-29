@@ -61,22 +61,36 @@ def parse_ports(spec: str | int | None) -> tuple[int, int] | None:
 
 
 def _load_exit(raw: dict) -> Exit:
+    """Construit une sortie WAN depuis la politique YAML.
+
+    Sans ``capacity_bps``, la capacité retombe sur ``speed_bps`` et la sortie est marquée
+    ``capacity_declared=False`` : le contrôle ``capacity`` (#13) le signale dans le rapport.
+
+    Args:
+        raw: Entrée ``exits`` d'un site.
+
+    Returns:
+        La sortie.
+    """
     logger.debug("_load_exit: entrée | {}", raw.get("name"))
     capacity = raw.get("capacity_bps")
-    if capacity is None:
+    declared = capacity is not None
+    if not declared:
         logger.warning(
             "Sortie {}: capacity_bps absent, repli sur speed_bps (utilisation sous-estimée si CIR < port)", raw["name"]
         )
         capacity = raw["speed_bps"]
-    logger.debug("_load_exit: sortie | {}", raw["name"])
-    return Exit(
+    ex = Exit(
         name=raw["name"],
         exporter=raw["exporter"],
         ifindex=int(raw["ifindex"]),
         speed_bps=int(raw["speed_bps"]),
         capacity_bps=int(capacity),
         role=raw.get("role", "principal"),
+        capacity_declared=declared,
     )
+    logger.debug("_load_exit: sortie | {} capacity_bps={} déclarée={}", ex.name, ex.capacity_bps, declared)
+    return ex
 
 
 def load_policy(path: Path) -> Policy:
