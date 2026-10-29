@@ -18,6 +18,7 @@ mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
 | `qos-audit compare` | Compare deux rapports d'audit (avant/après un changement). |
 | `qos-audit sampling` | Calcule le sampling recommandé par débit de lien ou par sortie, et l'erreur attendue. |
 | `qos-audit extract` | Extrait la QoS théorique (ACL + marquage) des configurations Comware : `policy.extracted.yaml` et rapport. |
+| `qos-audit ifindex-map` | Interroge les exporteurs en SNMP v2c (`ifDescr` ou `ifName`) et écrit le CSV `exporter,ifindex,name` de `extract --ifindex-map`. |
 
 ## Démarrage
 

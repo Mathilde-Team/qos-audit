@@ -1,9 +1,11 @@
-"""Point d'entrée : ``audit``, ``advise``, ``compare``, ``sampling``, ``extract``, ``sflow``."""
+"""Point d'entrée : ``audit``, ``advise``, ``compare``, ``sampling``, ``extract``, ``sflow``,
+``ifindex-map`` (table exporter/ifIndex/nom par SNMP)."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -28,6 +30,7 @@ from qos_audit.comware.extract import (
     render_site_report,
     site_policy_filename,
 )
+from qos_audit.comware.snmp import COMMUNITY_ENV, build_ifindex_rows, parse_exporters, write_ifindex_csv
 from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
 from qos_audit.models import Finding, Severity
 from qos_audit.policy import load_policies, load_policy
@@ -197,6 +200,30 @@ def _sampling(a: argparse.Namespace) -> int:
     return 0
 
 
+def _ifindex_map(a: argparse.Namespace) -> int:
+    """Écrit le CSV ``exporter,ifindex,name`` de ``extract --ifindex-map`` en interrogeant les exporteurs en SNMP.
+
+    Returns:
+        0 si tous les exporteurs ont répondu, 1 si l'un d'eux manque (CSV partiel écrit), 2 sans communauté.
+    """
+    logger.debug("_ifindex_map: entrée | {} exporteur(s) vers {}", len(a.exporter), a.out)
+    community = os.environ.get(COMMUNITY_ENV, "")
+    if not community:
+        logger.error("Communauté SNMP absente : définir la variable d'environnement {}", COMMUNITY_ENV)
+        logger.debug("_ifindex_map: sortie (erreur) | code 2")
+        return 2
+    rows, errors = build_ifindex_rows(
+        parse_exporters(a.exporter), community, a.column, timeout_s=a.timeout, retries=a.retries
+    )
+    write_ifindex_csv(rows, a.out)
+    logger.info("{} interface(s) de {} exporteur(s) dans {}", len(rows), len(a.exporter) - len(errors), a.out)
+    for e in errors:
+        logger.warning("Exporteur incomplet : {}", e)
+    code = 1 if errors else 0
+    logger.debug("_ifindex_map: sortie | code {}", code)
+    return code
+
+
 def _sflow(a: argparse.Namespace) -> int:
     """Extrait le contexte sFlow des configurations vers calibration.yaml et liste les constats (#19)."""
     logger.debug("_sflow: entrée | configs={}", a.cfg)
@@ -268,6 +295,13 @@ def main() -> int:
     sm.add_argument("--floor-ratio", type=float, default=0.05, help="plancher en fraction du débit du lien")
     sm.add_argument("--error-target", type=float, default=5.0, help="erreur cible à 95 %% (en %%)")
     sm.set_defaults(fn=_sampling)
+    im = sub.add_parser("ifindex-map", help=f"table exporter,ifindex,name par SNMP v2c (communauté : {COMMUNITY_ENV})")
+    im.add_argument("--exporter", nargs="+", required=True, help="nom ElastiFlow=hôte SNMP (ex. rtr-a-01=192.0.2.1)")
+    im.add_argument("--column", choices=["ifDescr", "ifName"], default="ifDescr", help="nom d'interface lu")
+    im.add_argument("--timeout", type=int, default=5, help="délai SNMP par requête (s)")
+    im.add_argument("--retries", type=int, default=1, help="nouvelles tentatives SNMP")
+    im.add_argument("--out", type=Path, default=Path("ifindex.csv"))
+    im.set_defaults(fn=_ifindex_map)
     sf = sub.add_parser("sflow", help="contexte sFlow par interface vers calibration.yaml (#19)")
     sf.add_argument("--cfg", type=Path, nargs="+", required=True, help="fichiers ou dossiers de configuration")
     sf.add_argument("--exporter", help="nom d'exporteur ElastiFlow (un seul fichier ; défaut : sysname)")
