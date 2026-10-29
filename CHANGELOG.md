@@ -37,6 +37,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
   composite paginé, le `date_histogram` à la minute, l'extrapolation par le sampling, la correction trame → IP, les
   counter samples et les temps de réponse sur 60 min et 24 h ; job CI « Intégration OpenSearch » non bloquant
   (OpenSearch 2.19.1 en service conteneur, runner `ubuntu-24.04`).
+- Contrôle `capacity` (#13) : WARN par sortie quand `capacity_bps` est absent (repli sur `speed_bps`), égal à la
+  vitesse du port (CIR du contrat à confirmer) ou supérieur à elle ; exécuté en tête d'`audit`, sans requête à
+  OpenSearch. Le relevé opérateur par site et par sortie (CIR, débit crête, sens) reste à reporter dans la politique.
 - Sous-commande `ifindex-map` (#18) : interroge chaque exporteur en SNMP v2c (`snmpwalk`, `ifDescr` par défaut ou
   `ifName`) et écrit le CSV `exporter,ifindex,name` d'`extract --ifindex-map` ; communauté lue dans
   `QOS_AUDIT_SNMP_COMMUNITY` et masquée dans les erreurs ; un exporteur injoignable n'arrête pas les autres.

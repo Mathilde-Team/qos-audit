@@ -120,6 +120,8 @@ class Exit:
     speed_bps: int
     capacity_bps: int
     role: str = "principal"
+    # False quand capacity_bps manquait dans la politique et vaut speed_bps par repli (contrôle `capacity`, #13).
+    capacity_declared: bool = True
 
 
 @dataclass(frozen=True)

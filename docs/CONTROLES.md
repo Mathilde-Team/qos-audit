@@ -6,6 +6,7 @@ Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur re
 
 | Contrôle (`check`) | Question posée | Gravité | Détectabilité |
 |---|---|---|---|
+| `capacity` | Chaque sortie a-t-elle sa capacité contractuelle (`capacity_bps`, CIR) ? Absente (repli sur `speed_bps`), égale à la vitesse du port ou supérieure à elle : utilisation, saturation et sampling recommandé reposent sur une base fausse (#13) | WARN | Déclaratif |
 | `marking` | Les flux matchant les ACL théoriques portent-ils le DSCP attendu (sens sortant) ? Le message signale un DSCP non confirmé | CRIT si conformité < seuil | Bonne si l'ACL est précise (IP serveur + ports) |
 | `dscp_plan` | Quelle part d'octets porte un DSCP hors plan ? Sens entrant : remarquage opérateur | WARN | Bonne |
 | `trust` | Du DSCP privilégié entre-t-il par un port non fiable ? | CRIT | Bonne |
