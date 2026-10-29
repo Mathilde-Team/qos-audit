@@ -14,6 +14,9 @@ ROOT = Path(__file__).parent.parent
 class FakeClient:
     """Client ElastiFlow factice pour l'audit : tout est DSCP 46, échantillons suffisants."""
 
+    def check_fields(self) -> None:
+        """Schéma toujours conforme (issue #16)."""
+
     def bytes_by(self, *_args, **_kw) -> list[dict]:
         return [{"dscp": 46, "ecn": 0, "in_if": 10, "sampling": 128, "bytes": 1e6, "samples": 500}]
 
