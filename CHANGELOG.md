@@ -8,10 +8,6 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
-- Marge sur les octets calibrée (#33) : `elastiflow.bytes_error_cv` (CV des tailles de paquets mesuré sur les séries B et
-  C) remplace l'hypothèse `bytes_error_margin` par √(1 + CV²) (Elastiflow-Validation §3.1) dans l'incertitude de chaque
-  constat ; nouveau constat informatif `bytes_error_margin` (marge mesurée ou supposée). CV négatif, non numérique ou
-  non fini refusé au chargement.
 - Sondes actives par classe (#29) : `qos-audit sondes` (et `audit --sondes`) lit `sondes.csv` de la série S
   d'Elastiflow-Validation (§8.8) et produit un constat `probe_priority` par sortie. Sur une même passe, une classe
   dégradée alors qu'une classe moins prioritaire ne l'est pas = priorisation inversée (CRIT pour les deux classes les

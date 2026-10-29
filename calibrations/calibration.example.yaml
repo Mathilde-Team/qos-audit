@@ -15,7 +15,6 @@ elastiflow:
   sampling_already_applied: null   # P5/P6 : true si ElastiFlow applique déjà le facteur d'échantillonnage
   bytes_overhead_per_packet: 0     # P5 : 14 si ElastiFlow additionne des octets de trame (la politique est en octets IP)
   ingest_lag_minutes: 5            # P7 : délai d'agrégation ; la fenêtre d'audit se termine à « maintenant - délai »
-  bytes_error_cv: null             # séries B et C : CV des tailles de paquets ; marge octets = √(1 + CV²) (#33)
 
 exporters:                     # P2 : `display sflow` sur chaque équipement ; état DÉPLOYÉ (à tenir à jour)
   rtr-a-01:

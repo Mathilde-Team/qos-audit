@@ -59,9 +59,7 @@ Les petits flux et les voix courtes sont mal représentés avec un taux de 1/100
   par écrit. « EF 45 » reste ambigu (DSCP 45 ou part de bande).
 - **Pas de classe sous BF chez l'opérateur** : le trafic de masse (sauvegarde) ne peut pas être « abaissé » de bout en bout ;
   seul un shaper local ou une plage horaire le contient.
-- **Marge sur les octets** : 1,25 par défaut sur l'incertitude affichée ; remplacée par √(1 + CV²) dès que le CV des tailles
-  de paquets des séries B et C est reporté dans `elastiflow.bytes_error_cv` (#33). Tant qu'il ne l'est pas, un trafic riche
-  en petits paquets (CV au-delà de 0,75) a une incertitude sous-estimée.
+- **Marge sur les octets** : 1,25 par défaut sur l'incertitude affichée ; à ajuster d'après les séries B et C de la validation.
 
 ## Ajouts de la session 04
 
