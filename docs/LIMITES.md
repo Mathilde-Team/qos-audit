@@ -38,7 +38,13 @@ soit ±24 % au lieu de ±10 %.
 ## Autres limites
 
 - **Capacité ≠ vitesse du port.** Un port de 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200. Renseigner `capacity_bps`.
-- **Microbursts** invisibles : buckets d'une minute par défaut (`Window.bucket`).
+- **Microbursts** invisibles : buckets d'une minute par défaut (`audit --bucket`, `Window.bucket`). Un bucket plus court
+  n'aide que s'il reste au-dessus du **plancher du sampling** : la colonne « bucket min s » de `qos-audit sampling` donne
+  la durée pour qu'un lien chargé au seuil `link_util_warn_pct` (70 %) porte `min_samples` (300) échantillons par bucket
+  (`t = min_samples × 8 × S × N / (u × C)`, S = 1500 octets). En repli sur les flux, un bucket sous ce
+  plancher est signalé dans le constat `saturation`. Avec les compteurs d'interface (30 s), un bucket plus court que
+  l'intervalle de compteurs n'est qu'interpolé. Seuls les compteurs de file voient des rafales de quelques
+  millisecondes : des drops sans saturation au bucket donnent le constat `microburst` (indice, pas mesure).
 - **Point de mesure** : l'échantillonnage en sortie n'est pas supporté de la même façon selon le modèle et la version de Comware (à vérifier). Le DSCP vu dépend du moment de l'échantillonnage (avant ou après la politique de sortie).
 - **Tunnels et chiffrement** : après IPsec, GRE ou SD-WAN, seuls l'en-tête externe et son DSCP sont visibles. Les ACL par ports ne s'appliquent plus. Le contrôle `encapsulated` (#30) mesure la part de trafic encapsulé par sortie (protocoles IP 47/50, UDP 500/4500, ports SD-WAN documentés) : majorité = audit non concluant, mesurer avant le tunnel ; `encapsulated_dscp` observe le DSCP externe (la copie du DSCP interne ne se vérifie pas depuis l'extérieur).
 - **Asymétrie et multi-sorties** : l'aller et le retour peuvent emprunter des sorties différentes ; raisonner par site et par sens.

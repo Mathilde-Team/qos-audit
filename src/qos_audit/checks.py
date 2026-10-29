@@ -7,6 +7,7 @@ adéquation du sampling, santé de la calibration.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from datetime import date, datetime
 
@@ -548,6 +549,13 @@ def check_saturation_and_overflow(
                 util = {ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_bps for ts, v in by_ts.items()}
                 source = "flows"
                 note = "repli sur les flux échantillonnés (compteurs absents ou insuffisants)"
+                # plancher de bucket (#28) : sous min_samples par bucket, un bucket isolé ne prouve rien
+                per_bucket = statistics.median(samples_by_ts.get(ts, 0) for ts in util)
+                if per_bucket < th["min_samples"]:
+                    note += (
+                        f" ; {per_bucket:.0f} éch./bucket < {th['min_samples']:.0f} : bucket {w.bucket} sous le"
+                        " plancher du sampling (voir qos-audit sampling)"
+                    )
             p95 = _p95(list(util.values()))
             peak_ts = max(util, key=util.get)
             over_warn = sum(1 for u in util.values() if u >= th["link_util_warn_pct"])
@@ -573,6 +581,7 @@ def check_saturation_and_overflow(
                         "buckets": len(util),
                         "capacity_bps": ex.capacity_bps,
                         "utilization_source": source,
+                        "bucket": w.bucket,
                         **(
                             {
                                 "counter_coverage_pct": 100 * rates.coverage,
@@ -1274,6 +1283,56 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     return result
 
 
+def check_microbursts(findings: list[Finding], w: Window) -> list[Finding]:
+    """Indice de microburst (#28) : congestion vue en sortie sur une sortie que la saturation au bucket juge saine.
+
+    Des marques ECN CE (``congestion_ecn`` WARN) — ou des drops de file (``congestion_drops`` CRIT) si la source
+    de compteurs les fournit — alors que l'utilisation en sortie reste sous le seuil d'alerte (``saturation``
+    egress OK) indiquent des rafales plus courtes que le bucket : la moyenne du bucket les lisse. Le constat
+    oriente vers un bucket plus court (``--bucket``, borné par le plancher du sampling) ou vers la lecture des
+    compteurs de file, seule mesure qui voit des rafales de quelques millisecondes.
+
+    Args:
+        findings: Constats déjà produits (saturation et congestion).
+        w: Fenêtre d'analyse (taille du bucket).
+
+    Returns:
+        Un constat WARN ``microburst`` par sortie concernée.
+    """
+    logger.debug("check_microbursts: entrée | {} constats, bucket {}", len(findings), w.bucket)
+    calm = {
+        (f.site, f.subject): f
+        for f in findings
+        if f.check == "saturation" and f.direction == "egress" and f.severity is Severity.OK
+    }
+    # Marques de congestion qui signent un pic : ECN CE vu en sortie (WARN) ou drops de file (CRIT).
+    alarm: dict[str, Severity] = {"congestion_ecn": Severity.WARN, "congestion_drops": Severity.CRIT}
+    out: list[Finding] = []
+    for f in findings:
+        min_sev = alarm.get(f.check)
+        if min_sev is None or f.severity < min_sev:
+            continue
+        sat = calm.get((f.site, f.subject))
+        if sat is None:
+            continue
+        p95 = sat.evidence.get("p95_pct", 0.0)
+        out.append(
+            Finding(
+                "microburst",
+                Severity.WARN,
+                f.subject,
+                f"{f.message} alors que l'utilisation reste à p95 {p95:.0f}% par bucket de {w.bucket} : rafales plus"
+                " courtes que le bucket probables ; réduire --bucket (plancher : qos-audit sampling) ou lire les"
+                " compteurs de file",
+                {"congestion": f.evidence, "p95_pct": p95, "bucket": w.bucket},
+                f.site,
+                "egress",
+            )
+        )
+    logger.debug("check_microbursts: retour | {} indice(s)", len(out))
+    return out
+
+
 def run_all(
     c: ElastiflowClient,
     p: Policy,
@@ -1304,6 +1363,7 @@ def run_all(
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
     findings += check_congestion(c, p, w, only_site)
+    findings += check_microbursts(findings, w)
     findings += check_exit_balance(c, p, w, only_site)
     findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
