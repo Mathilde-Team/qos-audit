@@ -13,7 +13,8 @@ sFlow prélève 1 paquet sur N (`1:N`). Le volume réel est estimé en multiplia
 Hypothèses de validité :
 
 - la formule porte sur le **comptage de paquets** ; pour des octets de tailles variables (trafic réel), prévoir
-  20 à 30 % de marge. L'outil applique `bytes_error_margin` (1,25 par défaut) à l'incertitude affichée dans chaque constat ;
+  20 à 30 % de marge. L'outil applique `bytes_error_margin` (1,25 par défaut) à l'incertitude affichée dans chaque constat,
+  remplacé par √(1 + CV²) quand le CV des tailles est mesuré (`elastiflow.bytes_error_cv`, voir CALIBRATION.md) ;
 - à **1:1**, tous les paquets sont échantillonnés : le comptage est exhaustif et la formule ne s'applique plus ;
 - le mode d'échantillonnage doit être `random` : le mode déterministe peut se caler sur un flux régulier.
 

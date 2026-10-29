@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -19,6 +20,7 @@ __all__ = [
     "apply_calibration",
     "default_calibration",
     "load_calibration",
+    "margin_from_cv",
 ]
 
 # Valeur des gabarits (calibration.example.yaml) : équivaut à une valeur absente.
@@ -78,6 +80,14 @@ class Calibration:
     validated_on: date | None = None
     reference: str | None = None
     elastiflow_version: str | None = None
+    bytes_error_cv: float | None = None
+
+    def bytes_error_margin(self) -> float | None:
+        """Marge sur l'erreur des octets déduite du CV mesuré (séries B et C), ou ``None`` s'il ne l'est pas."""
+        logger.debug("bytes_error_margin: entrée | cv={}", self.bytes_error_cv)
+        margin = None if self.bytes_error_cv is None else margin_from_cv(self.bytes_error_cv)
+        logger.debug("bytes_error_margin: sortie | {}", margin)
+        return margin
 
     def configured_rate(self, exporter: str, ifindex: int) -> int | None:
         """Sampling configuré pour une interface, s'il est connu."""
@@ -89,6 +99,50 @@ class Calibration:
         rate = next((i.sampling_rate for i in ex.interfaces if i.ifindex == ifindex), None)
         logger.debug("configured_rate: sortie | 1:{}", rate)
         return rate
+
+
+def margin_from_cv(cv: float) -> float:
+    """Facteur sur la borne 196/√n pour des paquets de tailles dispersées.
+
+    L'erreur à 95 % sur les octets vaut ``196·√((1+CV²)/n)`` (Elastiflow-Validation, protocole §3.1,
+    issue #10) : le facteur sur la borne des paquets de taille fixe est donc ``√(1+CV²)``.
+
+    Args:
+        cv: Coefficient de variation des tailles de paquets (écart-type / moyenne), positif ou nul.
+
+    Returns:
+        Le facteur, supérieur ou égal à 1.
+
+    Raises:
+        ValueError: CV négatif ou non fini.
+    """
+    logger.debug("margin_from_cv: entrée | cv={}", cv)
+    if not math.isfinite(cv) or cv < 0:
+        logger.debug("margin_from_cv: sortie | CV invalide")
+        raise ValueError(f"calibration : bytes_error_cv doit être un nombre positif ou nul, pas {cv!r}")
+    margin = math.sqrt(1 + cv * cv)
+    logger.debug("margin_from_cv: sortie | {:.3f}", margin)
+    return margin
+
+
+def _cv(value: object) -> float | None:
+    """``elastiflow.bytes_error_cv`` : CV des tailles de paquets mesuré, ou ``None`` s'il ne l'est pas encore."""
+    logger.debug("_cv: entrée | renseigné={}", value is not None)
+    if value is None or _text(value) is None:
+        logger.debug("_cv: sortie | non mesuré")
+        return None
+    if isinstance(value, bool):
+        logger.debug("_cv: sortie | booléen refusé")
+        # ValueError, pas TypeError : contrat de load_calibration (fichier de calibration mal formé).
+        raise ValueError("calibration : bytes_error_cv doit être un nombre, pas un booléen")  # noqa: TRY004
+    try:
+        cv = float(value)
+    except (TypeError, ValueError) as exc:
+        logger.debug("_cv: sortie | non numérique")
+        raise ValueError(f"calibration : bytes_error_cv doit être un nombre, pas {value!r}") from exc
+    margin_from_cv(cv)  # valide le domaine (positif, fini)
+    logger.debug("_cv: sortie | {}", cv)
+    return cv
 
 
 def default_calibration() -> Calibration:
@@ -150,7 +204,7 @@ def load_calibration(path: Path) -> Calibration:
         La calibration typée.
 
     Raises:
-        ValueError: bloc ``validation`` d'un exporteur mal formé.
+        ValueError: bloc ``validation`` d'un exporteur mal formé, ou ``elastiflow.bytes_error_cv`` invalide.
     """
     logger.debug("load_calibration: entrée | {}", path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -181,6 +235,7 @@ def load_calibration(path: Path) -> Calibration:
         validated_on=_as_date(raw.get("validated_on")),
         reference=raw.get("reference"),
         elastiflow_version=_text(ef.get("version")),
+        bytes_error_cv=_cv(ef.get("bytes_error_cv")),
     )
     logger.debug("load_calibration: sortie | {} exporteur(s)", len(exporters))
     return cal

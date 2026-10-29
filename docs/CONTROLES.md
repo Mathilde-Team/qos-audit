@@ -1,7 +1,7 @@
 # Catalogue des contrôles
 
 Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur relative à 95 %** (196/√n, multipliée par
-`bytes_error_margin` pour des octets de tailles variables). Sous `min_samples` (300 par défaut), le verdict est
+`bytes_error_margin` pour des octets de tailles variables, ou par √(1 + CV²) si `elastiflow.bytes_error_cv` est mesuré). Sous `min_samples` (300 par défaut), le verdict est
 `INCONCLUSIVE`, jamais `OK`.
 
 | Contrôle (`check`) | Question posée | Gravité | Détectabilité |
@@ -23,6 +23,7 @@ Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur re
 | `sampling_adequacy` | Le sampling reçu est-il adapté à la capacité de la sortie (erreur au plancher) ? | WARN > 5 %, CRIT > 15 % | Bonne |
 | `sampling_cost` | Le sampling est-il trop fin (CPU, export) ? | WARN | Estimation au pire cas |
 | `sampling_drift` | Le sampling configuré (calibration) est-il celui reçu ? | WARN | Bonne |
+| `bytes_error_margin` | Marge appliquée à l'incertitude des octets : mesurée (CV des séries B et C) ou supposée (politique) ? | OK (informatif) | Déclaratif |
 | `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage possible ? Chaque exporteur couvert par un périmètre validé, sans mise à jour depuis ? | WARN | Déclaratif |
 
 ## Lecture du débordement de classe
