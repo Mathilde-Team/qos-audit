@@ -20,21 +20,21 @@ NUIT = Window(datetime(2026, 10, 24, 23, 0, tzinfo=UTC), datetime(2026, 10, 24, 
 
 def _cluster(**kwargs):
     """Cluster de flux avec profil de charge complet (valeurs de sauvegarde)."""
-    base = dict(
-        site="site-a",
-        exit="wan1",
-        proto="tcp",
-        dst_port=6160,
-        dscp=0,
-        bytes=3.0e9,
-        samples=100_000,
-        share_pct=30.0,
-        buckets=(CAP_WAN1 / 8 * 0.30 * 60,) * 30,  # ~30 % du lien, octets par bucket d'une minute
-        bucket_seconds=60,
-        capacity_bps=CAP_WAN1,
-        start=NUIT.start,
-        reverse_bytes=1.0e6,  # asymétrie ×3000
-    )
+    base = {
+        "site": "site-a",
+        "exit": "wan1",
+        "proto": "tcp",
+        "dst_port": 6160,
+        "dscp": 0,
+        "bytes": 3.0e9,
+        "samples": 100_000,
+        "share_pct": 30.0,
+        "buckets": (CAP_WAN1 / 8 * 0.30 * 60,) * 30,  # ~30 % du lien, octets par bucket d'une minute
+        "bucket_seconds": 60,
+        "capacity_bps": CAP_WAN1,
+        "start": NUIT.start,
+        "reverse_bytes": 1.0e6,  # asymétrie ×3000
+    }
     base.update(kwargs)
     return FlowCluster(**base)
 
