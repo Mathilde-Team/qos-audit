@@ -33,6 +33,28 @@ Sorties dans `--out` :
 
 Code retour : 0 aucun constat, 1 au moins un `WARN`, 2 au moins une `ERROR`.
 
+## Table des ifIndex (`ifindex-map`)
+
+Le CSV de `--ifindex-map` se génère par SNMP (#18) : un `snmpwalk` v2c par exporteur sur l'IF-MIB, `ifDescr` par
+défaut (forme longue, proche de la configuration), `ifName` en option (forme courte). Les deux formes sont normalisées
+au chargement (`GE1/0/10` = `GigabitEthernet1/0/10`).
+
+    export QOS_AUDIT_SNMP_COMMUNITY=…        # communauté lue dans l'environnement, jamais journalisée
+    qos-audit ifindex-map --exporter rtr-a-01=192.0.2.1 rtr-a-02=192.0.2.2 \
+        --out configs/ifindex.csv
+
+| Option | Rôle |
+|---|---|
+| `--exporter` | `nom=hôte` : nom d'exporteur tel qu'ElastiFlow le voit, adresse SNMP (un nom seul sert aussi d'hôte) |
+| `--column` | `ifDescr` (défaut) ou `ifName` |
+| `--timeout`, `--retries` | Délai par requête (5 s) et nouvelles tentatives (1) de `snmpwalk` |
+| `--out` | CSV `exporter,ifindex,name` (défaut `ifindex.csv`) |
+
+Prérequis : `snmpwalk` (net-snmp ; paquet `snmp` sous Debian/Ubuntu). Un exporteur injoignable ou sans interface est
+signalé et n'arrête pas les autres : code retour 1, CSV partiel écrit ; 2 sans communauté. La communauté reste visible
+dans la liste des processus le temps du `snmpwalk` : lancer la commande depuis un poste d'administration.
+À vérifier sur le parc (#18) : la forme exacte renvoyée par `ifDescr` et `ifName` selon les versions de Comware.
+
 ## Ce que l'extraction comprend
 
 | Élément de configuration | Traitement |
