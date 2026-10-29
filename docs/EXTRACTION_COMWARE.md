@@ -104,7 +104,10 @@ le `match` d'une classe ne reprend plus les ACL des autres sites.
   pas été éprouvée sur vos configurations réelles (5130, 5510) : la première exécution doit être relue avec le rapport.
 - **Le match est une approximation.** Une ACL peut utiliser des critères que `FlowMatch` ne porte pas (DSCP, flags, fragments) ;
   les `deny` ne se traduisent pas en exclusions. Dans ces cas l'outil écarte la règle (`acl_rule_skipped`) ou élargit le match
-  (`acl_deny_ignored`) et le dit.
+  (`acl_deny_ignored`) et le dit. Décision du propriétaire (29/10/2026, issue #22) : le DSCP **d'entrée**, les drapeaux TCP
+  (`tcp established`) et les fragments ne sont **pas modélisés** — tout paquet repasse par les règles de base du marquage
+  Comware, la mesure sFlow étant prise sur le site distant. Le constat `acl_rule_skipped` reste en place pour signaler ces
+  règles : ce n'est pas une limite à lever, c'est le périmètre choisi.
 - **Politique globale** : sans `--per-site`, les `match` de plusieurs équipements sont fusionnés. Si les ACL diffèrent par
   site, la vérification par site reste valable mais sur l'union des critères : utiliser `--per-site`.
 - **Non extraits** : `remark dot1p` (seulement signalé, INFO), `qos map-table` (enregistré, interprétation du DSCP non
