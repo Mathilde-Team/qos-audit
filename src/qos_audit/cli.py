@@ -30,7 +30,7 @@ from qos_audit.comware.extract import (
 )
 from qos_audit.comware.ssh_netmiko import TransportNetmiko
 from qos_audit.counters import ComwareCliCounters, CounterSource, interfaces_depuis_csv
-from qos_audit.elastiflow import ElastiflowClient, Window
+from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
 from qos_audit.models import Finding, Severity
 from qos_audit.policy import load_policies, load_policy
 from qos_audit.probes import ProbeResult, check_probes, load_probes
@@ -72,6 +72,7 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         bytes_overhead_per_packet=cal.bytes_overhead_per_packet,
         counters_index=cal.counters_index,
     )
+    client.check_fields()
     window = _window(a.minutes, lag)
     logger.debug("_setup: sortie | calibration chargée")
     return client, cal, window
@@ -118,7 +119,12 @@ def _audit(a: argparse.Namespace) -> int:
         logger.error("sondes.csv illisible : {}", exc)
         logger.debug("_audit: sortie | 2")
         return 2
-    client, cal, window = _setup(a)
+    try:
+        client, cal, window = _setup(a)
+    except SchemaError as exc:
+        logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        logger.debug("_audit: sortie | 2")
+        return 2
     compteurs: CounterSource | None = None
     if getattr(a, "comware_drops", None):
         if not getattr(a, "comware_interfaces", None):
@@ -155,7 +161,12 @@ def _advise(a: argparse.Namespace) -> int:
         logger.debug("_advise: sortie | 2")
         return 2
     policy = policies[0]
-    client, _cal, window = _setup(a)
+    try:
+        client, _cal, window = _setup(a)
+    except SchemaError as exc:
+        logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        logger.debug("_advise: sortie | 2")
+        return 2
     clusters = discover_unclassified(client, policy, window, only_site=a.site)
     recos = recommend(clusters, load_catalog(a.catalog), policy)
     a.out.mkdir(parents=True, exist_ok=True)

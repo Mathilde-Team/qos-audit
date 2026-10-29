@@ -86,6 +86,8 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
+- Vérification du schéma ElastiFlow au démarrage d'`audit` et `advise` : chaque champ de `FIELDS` interrogé doit exister
+  dans le mapping de l'index, sinon erreur explicite et code retour 2 (#16).
 - Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
   (`uv.lock`, groupe `dev` avec ruff figé), couverture des branches et palier bloquant à 76 % (#1, #5).
 

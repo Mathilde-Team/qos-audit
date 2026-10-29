@@ -72,6 +72,9 @@ class Lab:
         self.donnees = donnees or {}
         self.appels: list[tuple] = []
 
+    def check_fields(self) -> None:
+        """Schéma toujours conforme (issue #16)."""
+
     def bytes_by(self, w, group_by, extra_filter=None):
         cle = (tuple(group_by), *_cle(extra_filter))
         self.appels.append(cle)
