@@ -7,8 +7,36 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+### Retiré
+- Recentrage sur le marquage (#78) : les Comware ne font que marquer, la priorisation est faite par les routeurs de
+  l'opérateur (hors d'accès) et le sFlow est pris sur le site distant. Sont retirés : la collecte SSH des drops par file
+  Comware (#10 : `ComwareCliCounters`, `comware/queue_stats.py`, `comware/ssh_netmiko.py`, `audit --comware-drops`,
+  extra `comware`/netmiko, constat `congestion_drops`), les sondes actives (#29 : `probes.py`, commande `sondes`,
+  `audit --sondes`, constat `probe_priority`, seuils `probe_*`), le traitement du double comptage (#26, annule la PR
+  #77) et la marge sur les octets calibrée (#33, annule la PR #74).
+
+### Ajouté
+- Sondes actives par classe (#29) : `qos-audit sondes` (et `audit --sondes`) lit `sondes.csv` de la série S
+  d'Elastiflow-Validation (§8.8) et produit un constat `probe_priority` par sortie. Sur une même passe, une classe
+  dégradée alors qu'une classe moins prioritaire ne l'est pas = priorisation inversée (CRIT pour les deux classes les
+  plus prioritaires, WARN entre classes de données) ; toutes les classes dégradées = congestion ou incident hors QoS
+  (WARN). Seuils `probe_loss_max_pct`, `probe_jitter_max_ms`, `probe_latency_max_ms` (latence si mesurée).
+- Extraction QoS étendue (#25) : `qos trust` (frontière de confiance déclarée dans `trust.trusted` du `policy.yaml` et le
+  rapport, INFO `trust_et_remise_a_zero` si l'interface est aussi remise à zéro par un classifier « tout le reste »),
+  `qos map-table` (enregistré, INFO `map_table_non_modelisee`), `remark dot1p` (INFO `remark_dot1p_non_traduit`),
+  `car cir`/`queue bandwidth` (budgets théoriques `car_bps` par classe, le plus strict des behaviors l'emporte ;
+  `class_overflow` compare au budget effectif `min(max_share_pct × capacity_bps, car_bps)`, et évalue une classe sans
+  `max_share_pct` mais avec `car`), applications `global` et `vlan-policy` dans les ports non fiables (globale : toutes les
+  interfaces sans policy entrante propre ; vlan-policy : interfaces d'accès `port access vlan` des VLAN listés, INFO
+  `vlan_policy_sans_port` sinon).
+
 ### Ajouté
 
+- Tests d'intégration contre un vrai OpenSearch (#17) : `tests/test_integration_opensearch.py` (marqueur
+  `integration`, exclu par défaut) indexe 24 h de flux et de counter samples ElastiFlow synthétiques et vérifie le
+  composite paginé, le `date_histogram` à la minute, l'extrapolation par le sampling, la correction trame → IP, les
+  counter samples et les temps de réponse sur 60 min et 24 h ; job CI « Intégration OpenSearch » non bloquant
+  (OpenSearch 2.19.1 en service conteneur, runner `ubuntu-24.04`).
 - Contrôle `capacity` (#13) : WARN par sortie quand `capacity_bps` est absent (repli sur `speed_bps`), égal à la
   vitesse du port (CIR du contrat à confirmer) ou supérieur à elle ; exécuté en tête d'`audit`, sans requête à
   OpenSearch. Le relevé opérateur par site et par sortie (CIR, débit crête, sens) reste à reporter dans la politique.
@@ -36,6 +64,15 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 - `policy.parse_comware_acl` s'appuie sur le parser et la conversion de `comware/` (une seule implémentation
   wildcard → CIDR et ports `eq/gt/lt/neq/range`, source et destination) ; TODO remplacé par la liste de ce qui
   reste non modélisé (#11).
+- Advisor : heuristique de profil « candidat sauvegarde » pour les flux de masse inconnus du
+  catalogue (`advisor/profile.py`, #9) — débit soutenu (≥ x % de `capacity_bps` sur une suite
+  consécutive de buckets), durée (≥ 15 min par défaut), plage horaire nocturne, asymétrie
+  sortant/entrant et « peu de paquets courts » (octets par échantillon). Seuils portés par le
+  catalogue (`profile: {heuristique: sauvegarde, debit_pct, duree_min, plage_horaire, asymetrie,
+  octets_par_echantillon}`), jamais en dur ; la recommandation reste un candidat
+  « classifier » à faible confiance, jamais appliquée sans validation. `discover_unclassified`
+  remplit le profil de chaque groupe (série `bytes_timeseries` + sens entrant + capacité de la
+  sortie + début de fenêtre), avec repli silencieux si la requête échoue.
 - Extraction : noms d'interface Comware normalisés (`GE1/0/10` = `GigabitEthernet1/0/10`, `XGE`, `BAGG`, `Vlan`…)
   dans `--ifindex-map` et la détection des ports non fiables ; un nom à deux ifIndex est refusé. Palier de
   couverture relevé de 79 à 80 % (mesure 80,11 %) (#24).
@@ -48,9 +85,20 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
   match (sémantique de première correspondance), traduites en clauses `must_not` dans
   les requêtes ElastiFlow et sérialisées dans la politique ; le constat
   `acl_deny_ignored` ne reste que pour les `deny` non modélisables (#21).
+- Compléments de tests (#5) :   tests du client ElastiFlow (fenêtres, filtres, agrégations, pagination) et des contrôles
+  `dscp_plan`, `untrusted_ports`, `class_share`, `congestion`, `exit_balance`, `sampling_drift`,
+  `calibration`, `run_all` ; tests du point d'entrée (`sampling`, `compare`, `audit`).
+  Couverture mesurée : 91,14 %.
+- Sous-commande `sflow` : extraction du contexte sFlow par interface depuis une configuration Comware
+  (sampling-rate, mode, collectors, counter interval) vers la section « exporters » de
+  `calibration.yaml`, avec constats (sortie WAN non échantillonnée, taux différents sur une
+  même chaîne, compteurs absents ou trop lents) ; alimente `sampling_drift` via les taux
+  configurés (#19).
 
 - Workflow de release `.github/workflows/release.yml` : tag `vX.Y.Z` = version de `pyproject.toml`, commit sur `main`,
   notes tirées de ce journal, archive des sources jointe (#4).
+- Vérification du schéma ElastiFlow au démarrage d'`audit` et `advise` : chaque champ de `FIELDS` interrogé doit exister
+  dans le mapping de l'index, sinon erreur explicite et code retour 2 (#16).
 - Socle : `LICENSE` MIT, `.gitignore`, `.yamllint.yaml`, `Makefile` (`make lint`, `make test`), passage à uv
   (`uv.lock`, groupe `dev` avec ruff figé), couverture des branches et palier bloquant à 76 % (#1, #5).
 

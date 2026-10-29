@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import argparse
 import ast
-
 from pathlib import Path
 
-from audit_debug_sorties import _is_stub  # noqa: E402
-from loguru import logger  # noqa: E402
+from audit_debug_sorties import _is_stub
+from loguru import logger
 
 BASES = (
     Path(__file__).resolve().parent.parent / "src",

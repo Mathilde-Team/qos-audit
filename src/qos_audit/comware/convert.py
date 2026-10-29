@@ -27,21 +27,28 @@ _PORT_MAX = 65535
 
 def dscp_value(token: str) -> int | None:
     """Valeur numérique d'un DSCP écrit en nom (``ef``) ou en nombre (0-63)."""
+    logger.debug("dscp_value: entrée | {}", token)
     t = token.lower()
     if t in DSCP_BY_NAME:
+        logger.debug("dscp_value: retour | nom {} -> {}", t, DSCP_BY_NAME[t])
         return DSCP_BY_NAME[t]
+    logger.debug("dscp_value: retour | {} -> {}", token, int(t) if t.isdigit() and 0 <= int(t) <= 63 else None)
     return int(t) if t.isdigit() and 0 <= int(t) <= 63 else None
 
 
 def dscp_name(value: int) -> str:
     """Nom usuel d'un DSCP (``ef``, ``af41``…), ou ``dscp<n>``."""
+    logger.debug("dscp_name: retour | {} -> {}", value, _NAME_BY_DSCP.get(value, f"dscp{value}"))
     return _NAME_BY_DSCP.get(value, f"dscp{value}")
 
 
 def normalize_protocol(token: str | None) -> str | None:
     """Nom de protocole tel que le fournit ElastiFlow ; ``ip`` signifie tous les protocoles (None)."""
+    logger.debug("normalize_protocol: entrée | {}", token)
     if token is None or token.lower() == "ip":
+        logger.debug("normalize_protocol: retour | {} -> tous protocoles", token)
         return None
+    logger.debug("normalize_protocol: retour | {} -> {}", token, _PROTO.get(token, token.lower()))
     return _PROTO.get(token, token.lower())
 
 
@@ -55,17 +62,23 @@ def wildcard_to_cidr(addr: str, wildcard: str) -> str | None:
     Returns:
         CIDR, ``None`` pour « any » (wildcard 255.255.255.255), ou ``"?"`` si le wildcard n'est pas contigu.
     """
+    logger.debug("wildcard_to_cidr: entrée | {} {}", addr, wildcard)
     wild = int(ipaddress.IPv4Address(wildcard)) if "." in wildcard else int(wildcard)
     if wild == 0xFFFFFFFF:
+        logger.debug("wildcard_to_cidr: retour | any ({} {})", addr, wildcard)
         return None
     if wild & (wild + 1):
+        logger.debug("wildcard_to_cidr: retour | wildcard non contigu {}", wildcard)
         return "?"
+    logger.debug("wildcard_to_cidr: retour | {}/{}", addr, 32 - wild.bit_length())
     return str(ipaddress.ip_network(f"{addr}/{32 - wild.bit_length()}", strict=False))
 
 
 def ports_to_ranges(spec: tuple[str, int, int | None] | None) -> list[tuple[int, int] | None]:
     """Convertit ``(opérateur, p1, p2)`` en intervalles ; ``[None]`` signifie « tous les ports »."""
+    logger.debug("ports_to_ranges: entrée | {}", spec)
     if spec is None:
+        logger.debug("ports_to_ranges: retour | tous les ports")
         return [None]
     op, p1, p2 = spec
     table = {
@@ -75,10 +88,12 @@ def ports_to_ranges(spec: tuple[str, int, int | None] | None) -> list[tuple[int,
         "neq": [(0, p1 - 1), (p1 + 1, _PORT_MAX)],
         "range": [(p1, p2 if p2 is not None else p1)],
     }
+    logger.debug("ports_to_ranges: retour | {} intervalle(s)", len(table[op]))
     return list(table[op])
 
 
 def _addresses(rule: AclRule, side: str, dev: DeviceQos, acl: Acl) -> list[str | None] | None:
+    logger.debug("_addresses: entrée | règle {} côté {}", rule.rule_id, side)
     addr = rule.src if side == "src" else rule.dst
     group = rule.src_group if side == "src" else rule.dst_group
     if group:
@@ -87,9 +102,12 @@ def _addresses(rule: AclRule, side: str, dev: DeviceQos, acl: Acl) -> list[str |
             dev.issues.append(
                 Issue("WARN", "object_group_unresolved", acl.label, f"object-group {group} inconnu ou vide")
             )
+            logger.debug("_addresses: retour | object-group {} non résolu", group)
             return None
+        logger.debug("_addresses: retour | {} CIDR(s) du groupe {}", len(cidrs), group)
         return list(cidrs)
     if addr is None:
+        logger.debug("_addresses: retour | any")
         return [None]
     cidr = wildcard_to_cidr(*addr)
     if cidr == "?":
@@ -101,7 +119,9 @@ def _addresses(rule: AclRule, side: str, dev: DeviceQos, acl: Acl) -> list[str |
                 f"règle {rule.rule_id} : wildcard {addr[1]} non convertible",
             )
         )
+        logger.debug("_addresses: retour | wildcard non contigu {}", addr[1])
         return None
+    logger.debug("_addresses: retour | {}", cidr)
     return [cidr]
 
 
