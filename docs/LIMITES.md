@@ -15,7 +15,11 @@ La **conformité du marquage observé** et la **charge offerte par classe**, à 
    fenêtre mais peut la déborder : le rapport présente cet intervalle, des drops survenus hors
    fenêtre y sont inclus. Certaines versions (5130) n'exposent pas les drops par file : sortie non
    mesurable, pas de zéro inventé.
-2. **La qualité vécue** (latence, jitter, perte). Prévoir RTCP/HEP, des sondes actives ou des flux synthétiques marqués.
+2. **La qualité vécue** (latence, jitter, perte) du trafic réel. Les sondes actives par classe (série S
+   d'Elastiflow-Validation, contrôle `probe_priority`, #29) mesurent celle d'un flux léger dans le profil, toutes les
+   15 minutes : elles révèlent une priorisation inversée, pas la qualité d'un appel donné. La lecture RTCP/HEP de la
+   voix réelle (OxoHepBridge) reste à faire. Les seuils `probe_*` sont communs à toutes les classes : à aligner sur le
+   contrat de l'opérateur.
 3. **Ce qui se passe dans le LAN**, hors des sorties instrumentées.
 
 ## Incertitude d'échantillonnage

@@ -8,6 +8,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
+- Sondes actives par classe (#29) : `qos-audit sondes` (et `audit --sondes`) lit `sondes.csv` de la série S
+  d'Elastiflow-Validation (§8.8) et produit un constat `probe_priority` par sortie. Sur une même passe, une classe
+  dégradée alors qu'une classe moins prioritaire ne l'est pas = priorisation inversée (CRIT pour les deux classes les
+  plus prioritaires, WARN entre classes de données) ; toutes les classes dégradées = congestion ou incident hors QoS
+  (WARN). Seuils `probe_loss_max_pct`, `probe_jitter_max_ms`, `probe_latency_max_ms` (latence si mesurée).
 - Extraction QoS étendue (#25) : `qos trust` (frontière de confiance déclarée dans `trust.trusted` du `policy.yaml` et le
   rapport, INFO `trust_et_remise_a_zero` si l'interface est aussi remise à zéro par un classifier « tout le reste »),
   `qos map-table` (enregistré, INFO `map_table_non_modelisee`), `remark dot1p` (INFO `remark_dot1p_non_traduit`),

@@ -38,6 +38,9 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "encapsulated_inconclusive_pct": 50,  # part du trafic encapsulé au-delà : audit non concluant (#30)
     "voice_max_packet_bytes": 300,  # paquet voix : G.711 20 ms = 200 o IP ; au-delà, pas de la voix
     "port_range_non_voice_max_pct": 10,  # part tolérée d'octets non voix dans une classe voix par plage
+    "probe_loss_max_pct": 1,  # sondes (#29) : pertes au-delà = classe dégradée (contrat opérateur, 8.6)
+    "probe_jitter_max_ms": 30,  # gigue au-delà = classe dégradée
+    "probe_latency_max_ms": 150,  # latence au-delà = classe dégradée (G.114, voix interactive)
 }
 
 
