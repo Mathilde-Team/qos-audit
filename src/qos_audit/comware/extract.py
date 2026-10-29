@@ -47,6 +47,8 @@ class MarkingRule:
     matches: tuple[FlowMatch, ...]
     catch_all: bool
     applied_on: tuple[str, ...]  # « <interface|global|vlan> <sens> »
+    car_cir_bps: int | None = None  # ``car cir`` du behavior (bps)
+    queue_bps: int | None = None  # ``queue bandwidth`` du behavior (bps)
 
 
 @dataclass
@@ -68,16 +70,19 @@ def load_devices(paths: list[Path], exporter: str | None = None) -> list[DeviceQ
     Returns:
         Un ``DeviceQos`` par fichier.
     """
+    logger.debug("load_devices: entrée | {} chemin(s)", len(paths))
     files: list[Path] = []
     for p in paths:
         files += sorted([*p.glob("*.cfg"), *p.glob("*.txt")]) if p.is_dir() else [p]
     if exporter and len(files) != 1:
         msg = "--exporter n'est valable que pour un seul fichier de configuration"
+        logger.debug("load_devices: sortie (refus) | {} fichier(s) avec --exporter", len(files))
         raise ValueError(msg)
     devices = []
     for f in files:
         logger.info("Analyse de {}", f)
         devices.append(parse_device(f.read_text(encoding="utf-8", errors="replace"), exporter, f.name))
+    logger.debug("load_devices: sortie | {} équipement(s)", len(devices))
     return devices
 
 
@@ -114,9 +119,11 @@ def load_ifindex_map(path: Path) -> dict[tuple[str, str], int]:
 
 
 def _applications(dev: DeviceQos, policy: str) -> list[str]:
+    logger.debug("_applications: entrée | politique={}", policy)
     apps = [f"{i.name} {d}" for i in dev.interfaces.values() for p, d in i.applied if p == policy]
     apps += [f"global {d}" for p, d in dev.global_apps if p == policy]
     apps += [f"vlan {v} {d}" for p, d, v in dev.vlan_apps if p == policy]
+    logger.debug("_applications: sortie | {} application(s) de {}", len(apps), policy)
     return apps
 
 
@@ -140,11 +147,14 @@ def _flag_wide_ranges(dev: DeviceQos, subject: str, matches: list[FlowMatch]) ->
 
 def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], bool]:
     """Critères d'un classifier : (FlowMatch, catch_all)."""
+    logger.debug("_classifier_matches: entrée | {}", name)
     if name == "default-class":
+        logger.debug("_classifier_matches: sortie | default-class, catch-all")
         return [], True
     cls = dev.classifiers.get(name)
     if cls is None:
         dev.issues.append(Issue("ERROR", "classifier_not_found", name, "classifier référencé mais non défini"))
+        logger.debug("_classifier_matches: sortie | classifier {} introuvable", name)
         return [], False
     catch_all = any(k == "any" for k, _ in cls.criteria)
     acls = [v for k, v in cls.criteria if k == "acl"]
@@ -167,11 +177,13 @@ def _classifier_matches(dev: DeviceQos, name: str) -> tuple[list[FlowMatch], boo
         converted = acl_to_matches(dev, acl)
         _flag_wide_ranges(dev, acl.label, converted)
         matches += converted
+    logger.debug("_classifier_matches: sortie | {} match(s) pour {}", len(matches), name)
     return matches, catch_all and not matches
 
 
 def marking_rules(dev: DeviceQos) -> list[MarkingRule]:
     """Règles de marquage (``remark dscp`` / ``remark ip-precedence``) des policies effectivement appliquées."""
+    logger.debug("marking_rules: entrée | {} policy(ies)", len(dev.policies))
     rules: list[MarkingRule] = []
     for pol in dev.policies.values():
         apps = _applications(dev, pol.name)
@@ -188,18 +200,32 @@ def marking_rules(dev: DeviceQos) -> list[MarkingRule]:
             matches, catch_all = _classifier_matches(dev, entry.classifier)
             rules.append(
                 MarkingRule(
-                    dev.exporter, pol.name, entry.classifier, beh.name, beh.dscp, tuple(matches), catch_all, tuple(apps)
+                    dev.exporter,
+                    pol.name,
+                    entry.classifier,
+                    beh.name,
+                    beh.dscp,
+                    tuple(matches),
+                    catch_all,
+                    tuple(apps),
+                    car_cir_bps=beh.car_cir_bps,
+                    queue_bps=beh.queue_bps,
                 )
             )
+    logger.debug("marking_rules: sortie | {} règle(s)", len(rules))
     return rules
 
 
 def _dedupe(matches: list[FlowMatch]) -> list[FlowMatch]:
+    logger.debug("_dedupe: sortie | {} -> {} unique(s)", len(matches), len(dict.fromkeys(matches)))
     return list(dict.fromkeys(matches))
 
 
 def _match_to_dict(m: FlowMatch) -> dict:
+    logger.debug("_match_to_dict: entrée | {}", m)
+
     def rng(r: tuple[int, int] | None) -> str | None:
+        logger.debug("_match_to_dict.rng: sortie | {}", r)
         return None if r is None else (str(r[0]) if r[0] == r[1] else f"{r[0]}-{r[1]}")
 
     d = {"protocol": m.protocol, "src_cidr": m.src_cidr, "dst_cidr": m.dst_cidr,
@@ -207,24 +233,131 @@ def _match_to_dict(m: FlowMatch) -> dict:
     d = {k: v for k, v in d.items() if v is not None}
     if m.excludes:  # #21 : les deny précédents, sérialisés comme le match lui-même
         d["excludes"] = [_match_to_dict(e) for e in m.excludes]
+    logger.debug("_match_to_dict: sortie | {} clé(s)", len(d))
     return d
 
 
-def _untrusted(rules: list[MarkingRule], allowed: frozenset[int], ifmap: dict[tuple[str, str], int]) -> list[dict]:
-    """Interfaces d'entrée où un classifier « tout le reste » ramène le DSCP à une valeur autorisée."""
+def _vlan_set(spec: str) -> set[int] | None:
+    """VLANs d'une ``qos vlan-policy`` : ``10 20-22`` (``all`` -> None, couverture inconnue)."""
+    logger.debug("_vlan_set: entrée | {}", spec)
+    if spec.strip() == "all":
+        logger.debug("_vlan_set: sortie | all (inconnu)")
+        return None
+    vlans: set[int] = set()
+    for item in spec.split():
+        for part in item.split(","):
+            if "-" in part:
+                a, _, b = part.partition("-")
+                if a.isdigit() and b.isdigit():
+                    vlans.update(range(int(a), int(b) + 1))
+            elif part.isdigit():
+                vlans.add(int(part))
+    logger.debug("_vlan_set: sortie | {} vlan(s)", len(vlans))
+    return vlans
+
+
+def _untrusted(
+    rules: list[MarkingRule],
+    allowed: frozenset[int],
+    ifmap: dict[tuple[str, str], int],
+    by_exporter: dict[str, DeviceQos],
+) -> tuple[list[dict], list[dict]]:
+    """Ports d'entrée où un classifier « tout le reste » ramène le DSCP à une valeur autorisée.
+
+    Une application **globale** (``qos apply policy … global``) s'applique à toutes les interfaces sans policy
+    entrante propre ; une **vlan-policy** aux interfaces d'accès des VLAN listés. Retourne aussi la liste des
+    interfaces déclarées ``qos trust`` (frontière de confiance déclarée).
+    """
+    logger.debug("_untrusted: entrée | {} règle(s)", len(rules))
     out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(exporter: str, ifname: str, trust: str | None = None) -> None:
+        logger.debug("_untrusted.add: entrée | {}:{}", exporter, ifname)
+        key = (exporter, ifname)
+        if key in seen:
+            logger.debug("_untrusted.add: sortie | déjà présent")
+            return
+        seen.add(key)
+        entry: dict = {"exporter": exporter, "ifname": ifname}
+        if trust:
+            entry["trust"] = trust
+        ik = (exporter, normalize_ifname(ifname))
+        if ik in ifmap:
+            entry["ifindex"] = ifmap[ik]
+        out.append(entry)
+        logger.debug("_untrusted.add: sortie | {} port(s) au total", len(out))
+
     for r in rules:
         if not (r.catch_all and r.dscp in allowed):
             continue
         for app in r.applied_on:
             name, _, direction = app.rpartition(" ")
-            if direction != "inbound" or name.startswith(("global", "vlan")):
+            if direction != "inbound":
                 continue
-            entry: dict = {"exporter": r.exporter, "ifname": name}
-            key = (r.exporter, normalize_ifname(name))
-            if key in ifmap:
-                entry["ifindex"] = ifmap[key]
-            out.append(entry)
+            dev = by_exporter.get(r.exporter)
+            if name.startswith("global"):
+                # policy globale entrante : toutes les interfaces sans policy entrante propre
+                if dev is None:
+                    continue
+                for itf in dev.interfaces.values():
+                    if any(d == "inbound" for _, d in itf.applied):
+                        continue
+                    add(r.exporter, itf.name, itf.trust)
+                continue
+            if name.startswith("vlan"):
+                # vlan-policy : interfaces d'accès des VLAN listés (membre : port access vlan)
+                if dev is None:
+                    continue
+                vlans = _vlan_set(name.split(" ", 1)[1])
+                matched = False
+                for itf in dev.interfaces.values():
+                    if vlans is None or set(itf.access_vlans) & vlans:
+                        matched = True
+                        if any(d == "inbound" for _, d in itf.applied):
+                            continue
+                        add(r.exporter, itf.name, itf.trust)
+                if not matched:
+                    dev.issues.append(
+                        Issue(
+                            "INFO",
+                            "vlan_policy_sans_port",
+                            r.policy,
+                            f"vlan-policy sans interface d'accès connue ({name.split(' ', 1)[1]})",
+                        )
+                    )
+                continue
+            add(r.exporter, name, (dev.interfaces.get(name).trust if dev and name in dev.interfaces else None))
+
+    trusted: list[dict] = []
+    for dev in by_exporter.values():
+        for itf in dev.interfaces.values():
+            if itf.trust is None:
+                continue
+            entry = {"exporter": dev.exporter, "ifname": itf.name, "mode": itf.trust}
+            ik = (dev.exporter, normalize_ifname(itf.name))
+            if ik in ifmap:
+                entry["ifindex"] = ifmap[ik]
+            trusted.append(entry)
+            if (dev.exporter, itf.name) in seen:
+                dev.issues.append(
+                    Issue(
+                        "INFO",
+                        "trust_et_remise_a_zero",
+                        itf.name,
+                        f"qos trust {itf.trust} mais DSCP remis à zéro par un classifier « tout le reste »",
+                    )
+                )
+    logger.debug("_untrusted: sortie | {} interface(s), {} déclarée(s) trust", len(out), len(trusted))
+    return out, trusted
+
+
+def _car_budget(rules: list[MarkingRule], dscps: set[int]) -> int | None:
+    """Budget ``car cir`` effectif d'une classe : le plus strict des behaviors qui la marquent."""
+    logger.debug("_car_budget: entrée | {} DSCP", len(dscps))
+    values = [r.car_cir_bps for r in rules if not r.catch_all and r.dscp in dscps and r.car_cir_bps is not None]
+    out = min(values) if values else None
+    logger.debug("_car_budget: sortie | {}", out)
     return out
 
 
@@ -246,6 +379,7 @@ def build_policy(
     Returns:
         ``(politique sous forme de dictionnaire YAML, extraction avec règles et constats)``.
     """
+    logger.debug("build_policy: entrée | {} équipement(s)", len(devices))
     ifmap = ifmap or {}
     ext = Extraction(devices=devices)
     for dev in devices:
@@ -278,6 +412,9 @@ def build_policy(
             entry: dict = {"name": c.name, "dscp": sorted(c.dscp), "priority": c.priority}
             if c.max_share_pct is not None:
                 entry["max_share_pct"] = c.max_share_pct
+            car = _car_budget(ext.rules, set(c.dscp))
+            if car is not None:
+                entry["car_bps"] = car
             if not c.dscp_confirmed:
                 entry["dscp_confirmed"] = False
             entry["match"] = matches
@@ -294,19 +431,26 @@ def build_policy(
                     f"DSCP {d} imposé par une configuration mais absent du plan",
                 )
             )
+        car = _car_budget(ext.rules, {d})
         classes.append({"name": dscp_name(d), "dscp": [d], "priority": _UNKNOWN_PRIORITY + rank if base else rank,
                         **({"dscp_confirmed": False} if base else {}),
+                        **({"car_bps": car} if car is not None else {}),
                         "match": [_match_to_dict(m) for m in _dedupe(by_dscp[d])]})  # fmt: skip
     if not base and default_dscp - set(by_dscp):
         for d in sorted(default_dscp - set(by_dscp)):
             classes.append({"name": dscp_name(d), "dscp": [d], "priority": _CATCH_ALL_PRIORITY, "match": []})
     allowed = base.allowed_dscp_from_untrusted if base else frozenset({0})
-    untrusted = _untrusted(ext.rules, allowed, ifmap)
+    by_exporter = {d.exporter: d for d in devices}
+    untrusted, trusted = _untrusted(ext.rules, allowed, ifmap, by_exporter)
     if base:
         untrusted += [u for u in base.untrusted if u not in untrusted]
     policy: dict = {
         "classes": classes,
-        "trust": {"untrusted": untrusted, "allowed_dscp_from_untrusted": sorted(allowed)},
+        "trust": {
+            "untrusted": untrusted,
+            "trusted": trusted,
+            "allowed_dscp_from_untrusted": sorted(allowed),
+        },
     }
     if base:
         policy["dscp_names"] = dict(base.dscp_names)
@@ -320,6 +464,12 @@ def build_policy(
     _divergences(ext)
     for dev in devices:
         ext.issues += dev.issues
+    logger.debug(
+        "build_policy: sortie | {} classe(s), {} règle(s), {} constat(s)",
+        len(classes),
+        len(ext.rules),
+        len(ext.issues),
+    )
     return policy, ext
 
 
@@ -504,16 +654,19 @@ def render_site_report(sites: dict[str, tuple[dict, Extraction]], issues: list[I
 
 def policy_to_yaml(policy: dict, sources: list[str]) -> str:
     """Sérialise la politique avec un en-tête de provenance."""
+    logger.debug("policy_to_yaml: entrée | {} source(s)", len(sources))
     head = (
         "# Généré par `qos-audit extract` depuis : "
         + ", ".join(sources)
         + "\n# À relire avant usage (voir extraction_report.md).\n"
     )
+    logger.debug("policy_to_yaml: sortie | {} caractère(s)", len(head))
     return head + yaml.safe_dump(policy, sort_keys=False, allow_unicode=True)
 
 
 def render_report(ext: Extraction, policy: dict) -> str:
     """Rapport Markdown : couverture par équipement, règles de marquage, constats."""
+    logger.debug("render_report: entrée | {} équipement(s), {} règle(s)", len(ext.devices), len(ext.rules))
     lines = ["# Rapport d'extraction QoS", "", "## Équipements", "",
              "| Exporteur | Fichier | ACL | Classifiers | Behaviors | Policies | Interfaces avec policy |", "|---|---|---|---|---|---|---|"]  # fmt: skip
     for d in ext.devices:
@@ -538,8 +691,16 @@ def render_report(ext: Extraction, policy: dict) -> str:
     for u in policy["trust"]["untrusted"]:
         ident = u.get("ifname") or f"if{u.get('ifindex')}"
         suffix = f" (ifIndex {u['ifindex']})" if u.get("ifindex") is not None else " (ifIndex à renseigner)"
-        lines.append(f"- {u['exporter']} : {ident}{suffix}")
+        trust = f" — qos trust {u['trust']}" if u.get("trust") else ""
+        lines.append(f"- {u['exporter']} : {ident}{suffix}{trust}")
     if not policy["trust"]["untrusted"]:
+        lines.append("- aucune")
+    lines += ["", "## Interfaces déclarées trust (frontière de confiance)", ""]
+    for u in policy["trust"].get("trusted", []):
+        ident = u.get("ifname") or f"if{u.get('ifindex')}"
+        suffix = f" (ifIndex {u['ifindex']})" if u.get("ifindex") is not None else ""
+        lines.append(f"- {u['exporter']} : {ident} — qos trust {u['mode']}{suffix}")
+    if not policy["trust"].get("trusted"):
         lines.append("- aucune")
     lines += ["", "## Constats", ""]
     order = {"ERROR": 0, "WARN": 1, "INFO": 2}
@@ -547,4 +708,5 @@ def render_report(ext: Extraction, policy: dict) -> str:
         lines.append(f"- **{i.level}** `{i.code}` {i.subject} : {i.message}")
     if not ext.issues:
         lines.append("- aucun")
+    logger.debug("render_report: sortie | {} ligne(s)", len(lines))
     return "\n".join(lines) + "\n"

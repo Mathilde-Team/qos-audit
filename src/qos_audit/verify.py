@@ -19,11 +19,13 @@ def compare_reports(before: list[dict], after: list[dict]) -> list[dict]:
     Returns:
         Lignes ``{key, before, after, verdict}`` avec verdict ``amélioré``/``dégradé``/``inchangé``/``nouveau``.
     """
+    logger.debug("compare_reports: entrée | {} avant / {} après", len(before), len(after))
 
     def key(f: dict) -> tuple:
-        return f["check"], f["subject"], f.get("direction")
+        k = f["check"], f["subject"], f.get("direction")
+        logger.debug("key: sortie | {}", k)
+        return k
 
-    logger.debug("compare_reports: entrée | {} avant / {} après", len(before), len(after))
     b = {key(f): f["severity"] for f in before}
     out = []
     for f in after:
@@ -34,4 +36,5 @@ def compare_reports(before: list[dict], after: list[dict]) -> list[dict]:
         delta = _ORDER[f["severity"]] - _ORDER[b[k]]
         verdict = "inchangé" if delta == 0 else ("dégradé" if delta > 0 else "amélioré")
         out.append({"key": k, "before": b[k], "after": f["severity"], "verdict": verdict})
+    logger.debug("compare_reports: sortie | {} ligne(s) comparée(s)", len(out))
     return out

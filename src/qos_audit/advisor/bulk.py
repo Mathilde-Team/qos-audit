@@ -19,7 +19,10 @@ __all__ = ["render_shaper_policy"]
 
 
 def _ident(text: str) -> str:
-    return re.sub(r"[^A-Z0-9]+", "-", text.upper()).strip("-")
+    logger.debug("_ident: entrée | {}", text)
+    ident = re.sub(r"[^A-Z0-9]+", "-", text.upper()).strip("-")
+    logger.debug("_ident: sortie | {}", ident)
+    return ident
 
 
 def render_shaper_policy(recos: list[Recommendation]) -> str:

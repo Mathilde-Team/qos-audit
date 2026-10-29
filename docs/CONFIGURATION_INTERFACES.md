@@ -42,8 +42,7 @@ est identifié (P2). Sans `out_if`, la vue sortante par interface WAN est inexpl
 | `agent ip` | Loopback stable | L'IP exportatrice reste la même si un lien tombe |
 | NTP | Partout | Fenêtres d'analyse alignées |
 
-Vérifications côté équipement : `display sflow`, `display counters rate inbound interface <if>`, `display cpu-usage`,
-`display qos queue-statistics interface <if> outbound`.
+Vérifications côté équipement : `display sflow`, `display counters rate inbound interface <if>`, `display cpu-usage`.
 
 ## 3. Quelles interfaces échantillonner et à quel taux
 

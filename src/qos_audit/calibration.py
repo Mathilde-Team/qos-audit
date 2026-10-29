@@ -81,27 +81,39 @@ class Calibration:
 
     def configured_rate(self, exporter: str, ifindex: int) -> int | None:
         """Sampling configuré pour une interface, s'il est connu."""
+        logger.debug("configured_rate: entrée | {}:if{}", exporter, ifindex)
         ex = self.exporters.get(exporter)
         if ex is None:
+            logger.debug("configured_rate: sortie | exporteur inconnu")
             return None
-        return next((i.sampling_rate for i in ex.interfaces if i.ifindex == ifindex), None)
+        rate = next((i.sampling_rate for i in ex.interfaces if i.ifindex == ifindex), None)
+        logger.debug("configured_rate: sortie | 1:{}", rate)
+        return rate
 
 
 def default_calibration() -> Calibration:
     """Calibration neutre : aucune validation connue."""
+    logger.debug("default_calibration: sortie | calibration neutre")
     return Calibration()
 
 
 def _as_date(value: object) -> date | None:
+    logger.debug("_as_date: entrée | {}", value)
     if value in (None, ""):
+        logger.debug("_as_date: sortie | vide")
         return None
-    return value if isinstance(value, date) else date.fromisoformat(str(value))
+    d = value if isinstance(value, date) else date.fromisoformat(str(value))
+    logger.debug("_as_date: sortie | {}", d)
+    return d
 
 
 def _text(value: object) -> str | None:
     """Chaîne renseignée, ou ``None`` (absente, vide ou gabarit « à renseigner »)."""
+    logger.debug("_text: entrée | renseigné={}", value is not None)
     texte = None if value is None else str(value).strip()
-    return None if not texte or texte == _A_RENSEIGNER else texte
+    res = None if not texte or texte == _A_RENSEIGNER else texte
+    logger.debug("_text: sortie | renseigné={}", res is not None)
+    return res
 
 
 def _validation(name: str, raw: object, defaults: dict) -> Validation | None:
@@ -112,7 +124,8 @@ def _validation(name: str, raw: object, defaults: dict) -> Validation | None:
         return None
     if not isinstance(raw, dict):
         logger.debug("_validation: sortie | {} bloc invalide", name)
-        raise ValueError(f"calibration : exporters.{name}.validation doit être un dictionnaire")
+        # ValueError, pas TypeError : contrat de load_calibration (fichier de calibration mal formé).
+        raise ValueError(f"calibration : exporters.{name}.validation doit être un dictionnaire")  # noqa: TRY004
     rates = raw.get("sampling_rates") or ()
     v = Validation(
         validated_on=_as_date(raw.get("validated_on", defaults["validated_on"])),
@@ -175,9 +188,11 @@ def load_calibration(path: Path) -> Calibration:
 
 def apply_calibration(cal: Calibration) -> None:
     """Applique les noms de champs relevés en phase 0 (P4) au module ``elastiflow``."""
+    logger.debug("apply_calibration: entrée | champs={} compteurs={}", len(cal.fields), len(cal.counter_fields))
     if cal.fields:
         configure_fields(cal.fields)
         logger.info("Champs ElastiFlow surchargés : {}", sorted(cal.fields))
     if cal.counter_fields:
         configure_counter_fields(cal.counter_fields)
         logger.info("Champs de compteurs surchargés : {}", sorted(cal.counter_fields))
+    logger.debug("apply_calibration: sortie | calibration appliquée")

@@ -5,6 +5,10 @@ de l'opérateur) est confrontée aux **mesures sFlow** collectées par ElastiFlo
 Une **extraction** produit la politique théorique depuis les configurations Comware. Un moteur de **recommandation** propose des reclassements et génère un brouillon de configuration Comware.
 Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fiabilise l'instrument de mesure.
 
+**Périmètre.** Les Comware ne font que marquer ; la priorisation est faite par les routeurs de l'opérateur, hors d'accès.
+Le sFlow est pris sur le site distant : l'outil compare le marquage des paquets à l'arrivée à la QoS théorique. Il ne
+mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
+
 ## Commandes
 
 | Commande | Rôle |
@@ -14,6 +18,7 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 | `qos-audit compare` | Compare deux rapports d'audit (avant/après un changement). |
 | `qos-audit sampling` | Calcule le sampling recommandé par débit de lien ou par sortie, et l'erreur attendue. |
 | `qos-audit extract` | Extrait la QoS théorique (ACL + marquage) des configurations Comware : `policy.extracted.yaml` et rapport. |
+| `qos-audit ifindex-map` | Interroge les exporteurs en SNMP v2c (`ifDescr` ou `ifName`) et écrit le CSV `exporter,ifindex,name` de `extract --ifindex-map`. |
 
 ## Démarrage
 
@@ -34,7 +39,7 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 1. Dérouler la phase 0 de la validation d'ElastiFlow et renseigner `calibration.yaml` (champs, facteur d'échantillonnage,
    base de comptage, délai d'ingestion). Tant qu'il est incomplet, l'audit le signale.
-2. Renseigner `capacity_bps` (débit contractuel) pour chaque sortie : l'utilisation et le sampling se calculent sur la capacité.
+2. Renseigner `capacity_bps` (débit contractuel) pour chaque sortie : l'utilisation et le sampling se calculent sur la capacité. Le contrôle `capacity` signale une sortie sans capacité, ou dont la capacité vaut la vitesse du port (#13).
 3. Confirmer auprès de l'opérateur la correspondance des classes D1, D2 et D3 (`dscp_confirmed: false` dans l'exemple).
 4. Lire `docs/LIMITES.md` : sFlow est statistique et ne voit ni les files ni les drops.
 
@@ -56,5 +61,11 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 
 Le job CI « Qualité (lint, tests) » applique les mêmes contrôles ; le seuil de couverture (lignes et branches)
 est lu dans `pyproject.toml`.
+
+Les tests d'intégration (`tests/test_integration_opensearch.py`, #17) rejouent les requêtes du client ElastiFlow
+contre un vrai OpenSearch ; ils sont exclus de `make test` et tournent dans le job CI « Intégration OpenSearch »
+(non bloquant). En local, avec un OpenSearch sans sécurité sur le port 9200 :
+
+    OPENSEARCH_URL=http://localhost:9200 uv run pytest -m integration tests/test_integration_opensearch.py
 
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.

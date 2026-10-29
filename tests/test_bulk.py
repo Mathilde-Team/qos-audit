@@ -159,7 +159,11 @@ def test_run_all_et_cli(monkeypatch, tmp_path) -> None:
         vus.append(kw)
         return []
 
-    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: object())
+    class _FakeClient:
+        def check_fields(self) -> None:  # ajouté par dev dans _setup
+            """Ne vérifie rien."""
+
+    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: _FakeClient())
     monkeypatch.setattr(cli, "run_all", faux_run_all)
     argv = ["qos-audit", "audit", "--policy", str(POLICY), "--catalog", str(CATALOG), "--timezone", "UTC",
             "--out", str(tmp_path / "r.json")]  # fmt: skip
@@ -169,7 +173,11 @@ def test_run_all_et_cli(monkeypatch, tmp_path) -> None:
 
 
 def test_cli_advise_ecrit_le_shaper(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: object())
+    class _FakeClient:
+        def check_fields(self) -> None:  # ajouté par dev dans _setup
+            """Ne vérifie rien."""
+
+    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: _FakeClient())
     monkeypatch.setattr(cli, "discover_unclassified", lambda *a, **k: [SAUVEGARDE])
     out = tmp_path / "conseil"
     argv = ["qos-audit", "advise", "--policy", str(POLICY), "--catalog", str(CATALOG), "--out", str(out)]

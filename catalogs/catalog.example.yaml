@@ -17,5 +17,12 @@ applications:
   - name: sauvegarde
     target_class: bf                   # l'opérateur n'a pas de classe sous BF : shaper/plage horaire locaux (voir Q5-3)
     match: {protocol: tcp, ports: "6160-6162"}   # EXEMPLE : à adapter à vos outils de sauvegarde
-    profile: {bulk: true, plage_horaire: "22-06"}   # shape_pct: 20 (défaut) = débit du shaper hors plage, % de la capacité
+    profile: # #9 : seuils de l'heuristique « candidat sauvegarde » ; #34 : bulk shapé hors plage autorisée
+      heuristique: sauvegarde      # active la détection par profil de charge
+      debit_pct: 25                # débit soutenu : % de capacity_bps
+      duree_min: 15               # durée minimale du débit soutenu
+      plage_horaire: "22-06"      # fenêtre nocturne attendue
+      asymetrie: 8                # octets sortants / entrants
+      octets_par_echantillon: 800 # « peu de paquets courts »
+      bulk: true                   # #34 : shaper local attendu (shape_pct 20 % par défaut, % de la capacité)
     confidence: medium

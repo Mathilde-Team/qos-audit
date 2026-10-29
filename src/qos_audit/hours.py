@@ -34,8 +34,11 @@ def parse_hours(value: object) -> tuple[int, int] | None:
 
 def in_hours(hour: int, hours: tuple[int, int]) -> bool:
     """Indique si l'heure ``hour`` (0-23) tombe dans la plage ``hours`` (fin exclue, minuit franchissable)."""
+    logger.debug("in_hours: entrée | heure={} plage={}", hour, hours)
     start, end = hours[0] % 24, hours[1] % 24
-    return start <= hour < end if start < end else hour >= start or hour < end
+    dedans = start <= hour < end if start < end else hour >= start or hour < end
+    logger.debug("in_hours: sortie | {}", dedans)
+    return dedans
 
 
 def outside_periods(hours: tuple[int, int]) -> list[tuple[int, int]]:
