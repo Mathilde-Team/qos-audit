@@ -1,9 +1,8 @@
-"""Compteurs d'équipements : débits exacts d'interface (sFlow) et drops par file.
+"""Compteurs d'interface sFlow : débits exacts des sorties.
 
 Les counter samples sFlow livrent des compteurs d'interface cumulés (ifInOctets/ifOutOctets) toutes les 30 s :
 c'est la mesure **exacte** de l'utilisation d'une sortie, sans l'incertitude de l'échantillonnage des flux.
-Les flux ne servent plus qu'à la répartition par classe. sFlow ne voit pas les files : les drops par file restent
-branchables via SNMP ou la CLI Comware (``display qos queue-statistics interface``).
+Les flux ne servent plus qu'à la répartition par classe.
 """
 
 from __future__ import annotations
@@ -11,14 +10,16 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Protocol
 
 from loguru import logger
 
 from qos_audit.elastiflow import Window
 from qos_audit.models import Direction
 
-__all__ = ["ComwareCliCounters", "CounterSource", "InterfaceRates", "NullCounters", "rates_from_counters"]
+__all__ = [
+    "InterfaceRates",
+    "rates_from_counters",
+]
 
 
 @dataclass(frozen=True)
@@ -131,36 +132,3 @@ def rates_from_counters(samples: list[dict], w: Window, direction: str) -> Inter
         rates.usable,
     )
     return rates
-
-
-class CounterSource(Protocol):
-    """Fournisseur de compteurs de drops."""
-
-    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
-        """Drops par file/classe sur la fenêtre.
-
-        Args:
-            exporter: Nom de l'équipement.
-            ifindex: Interface de sortie.
-            w: Fenêtre d'analyse.
-
-        Returns:
-            ``{nom_de_file_ou_classe: paquets_droppés}``.
-        """
-        ...
-
-
-class NullCounters:
-    """Aucune source : les constats de congestion restent indirects (ECN, utilisation)."""
-
-    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
-        logger.debug("queue_drops: source absente | {}/{}", exporter, ifindex)
-        return {}
-
-
-class ComwareCliCounters:
-    """TODO: collecte SSH (netmiko/scrapli) + parsing des statistiques de files Comware, delta entre deux relevés."""
-
-    def queue_drops(self, exporter: str, ifindex: int, w: Window) -> dict[str, int]:
-        logger.debug("queue_drops: collecte SSH non implémentée | {}/{}", exporter, ifindex)
-        raise NotImplementedError

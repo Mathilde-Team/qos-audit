@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -192,7 +193,7 @@ def _faux_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *args: str) -> 
         ]
 
     monkeypatch.setattr(cli, "run_all", run_all)
-    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: SimpleNamespace(check_fields=lambda: None))
     out = tmp_path / "rapport.json"
     monkeypatch.setattr(sys, "argv", ["qos-audit", "audit", *args, "--out", str(out)])
     code = cli.main()

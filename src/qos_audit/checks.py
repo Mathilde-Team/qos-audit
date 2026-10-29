@@ -13,10 +13,9 @@ from datetime import date, datetime
 from loguru import logger
 
 from qos_audit.calibration import Calibration, ExporterCal, Validation
-from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
+from qos_audit.counters import InterfaceRates, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import (
-    combined_error_pct,
     Direction,
     Exit,
     Finding,
@@ -25,6 +24,7 @@ from qos_audit.models import (
     QosClass,
     Severity,
     Site,
+    combined_error_pct,
     rel_error_pct,
     wide_port_range,
 )
@@ -37,7 +37,9 @@ from qos_audit.sampling import (
 
 __all__ = [
     "check_calibration",
+    "check_capacity",
     "check_counter_consistency",
+    "check_encapsulated_traffic",
     "match_filter",
     "run_all",
 ]
@@ -51,6 +53,9 @@ def match_filter(m: FlowMatch) -> dict:
     Les exclusions (``deny`` précédents, issue #21) deviennent des clauses
     ``must_not`` : le trafic rejeté par l'ACL ne compte pas dans le match.
     """
+    logger.debug(
+        "match_filter: entrée | proto={} ports_dst={} excl={}", bool(m.protocol), bool(m.dst_ports), len(m.excludes)
+    )
     f: list[dict] = []
     if m.protocol:
         f.append({"term": {FIELDS["proto"]: m.protocol}})
@@ -65,10 +70,12 @@ def match_filter(m: FlowMatch) -> dict:
     body: dict = {"filter": f}
     if m.excludes:
         body["must_not"] = [match_filter(e) for e in m.excludes]
+    logger.debug("match_filter: sortie | {} clause(s), {} exclusion(s)", len(f), len(m.excludes))
     return {"bool": body}
 
 
 def _and(*clauses: dict) -> dict:
+    logger.debug("_and: sortie | {} clause(s)", len(clauses))
     return {"bool": {"filter": list(clauses)}}
 
 
@@ -114,14 +121,19 @@ def _combined(rows: list[dict]) -> tuple[float, float] | None:
 
 
 def _enough(samples: int, p: Policy) -> bool:
+    logger.debug("_enough: sortie | {} >= {}", samples, p.thresholds["min_samples"])
     return samples >= p.thresholds["min_samples"]
 
 
 def _p95(values: list[float]) -> float:
+    logger.debug("_p95: entrée | {} valeur(s)", len(values))
     if not values:
+        logger.debug("_p95: sortie (vide) | 0.0")
         return 0.0
     s = sorted(values)
-    return s[min(len(s) - 1, int(0.95 * len(s)))]
+    v = s[min(len(s) - 1, int(0.95 * len(s)))]
+    logger.debug("_p95: sortie | {}", v)
+    return v
 
 
 def _bucket_key(ts: str, w: Window) -> int | None:
@@ -163,6 +175,7 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
         samples = c.counter_samples(ex.exporter, ex.ifindex, w)
     except Exception as exc:  # noqa: BLE001 — indisponibilité des compteurs : repli signalé sur les flux
         logger.warning("Compteurs indisponibles pour {}:if{} ({}): repli sur les flux", ex.exporter, ex.ifindex, exc)
+        logger.debug("_exit_rates: sortie | compteur indisponible (repli flux)")
         return None
     rates = rates_from_counters(samples, w, d)
     logger.debug("_exit_rates: sortie | usable={}", rates.usable)
@@ -170,15 +183,56 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
 
 
 def _exits(p: Policy, only_site: str | None):
+    logger.debug("_exits: entrée | sites={} filtre_site={}", len(p.sites), only_site)
     for site in p.sites:
         if only_site and site.name != only_site:
             continue
         for ex in site.exits:
             yield site, ex
+    logger.debug("_exits: sortie (itération terminée)")
+
+
+def check_capacity(p: Policy, only_site: str | None = None) -> list[Finding]:
+    """Capacité contractuelle déclarée pour chaque sortie (#13) : capacité ≠ vitesse du port.
+
+    Un port 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200 : sans ``capacity_bps`` réel, utilisation,
+    saturation et sampling recommandé sont calculés sur une base fausse. WARN quand ``capacity_bps`` est
+    absent (repli sur ``speed_bps``), égal à la vitesse du port (CIR non vérifiée) ou supérieur à elle
+    (incohérent).
+
+    Args:
+        p: Politique (sites et sorties).
+        only_site: Restreint le contrôle à un site.
+
+    Returns:
+        Un constat WARN par sortie douteuse, ou un constat OK unique.
+    """
+    logger.debug("check_capacity: entrée | site={}", only_site)
+    out: list[Finding] = []
+    for site, ex in _exits(p, only_site):
+        subject = f"{ex.exporter}:if{ex.ifindex} ({ex.name})"
+        evidence = {"speed_bps": ex.speed_bps, "capacity_bps": ex.capacity_bps}
+        if not ex.capacity_declared:
+            msg = (
+                "capacity_bps absent : repli sur la vitesse du port, utilisation sous-estimée si la CIR est plus basse"
+            )
+        elif ex.capacity_bps == ex.speed_bps:
+            msg = "capacity_bps égal à la vitesse du port : CIR du contrat à confirmer (débit montant ≠ descendant)"
+        elif ex.capacity_bps > ex.speed_bps:
+            msg = "capacity_bps supérieur à la vitesse du port : valeur incohérente"
+        else:
+            continue
+        out.append(_finding(p, "capacity", Severity.WARN, subject, msg, site=site, evidence=evidence))
+    result = out or [
+        _finding(p, "capacity", Severity.OK, "sorties", "capacité contractuelle renseignée pour chaque sortie")
+    ]
+    logger.debug("check_capacity: sortie | {} constat(s)", len(result))
+    return result
 
 
 def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Par site/sortie/classe : % d'octets sortants matchant les ACL théoriques qui portent un DSCP attendu."""
+    logger.debug("check_marking_conformity: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
         base = exit_filter(ex.exporter, ex.ifindex, Direction.EGRESS.value)
@@ -220,11 +274,13 @@ def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_sit
                         combined=_combined(rows),
                     )
                 )
+    logger.debug("check_marking_conformity: sortie | {} constat(s)", len(out))
     return out
 
 
 def check_dscp_plan(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Par sortie et sens : DSCP hors plan (mal marqué / remarquage opérateur sur le sens entrant)."""
+    logger.debug("check_dscp_plan: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     known = p.all_dscp()
     for site, ex in _exits(p, only_site):
@@ -263,6 +319,7 @@ def check_dscp_plan(c: ElastiflowClient, p: Policy, w: Window, only_site: str | 
                     evidence={"unknown": unknown},
                 )
             )
+    logger.debug("check_dscp_plan: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -371,6 +428,7 @@ def check_port_ranges(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
 
 def check_untrusted_ports(c: ElastiflowClient, p: Policy, w: Window) -> list[Finding]:
     """Détecte du DSCP privilégié entrant par un port non fiable (marquage non remis à zéro / abus)."""
+    logger.debug("check_untrusted_ports: entrée | ports_non_fiables={}", len(p.untrusted))
     out: list[Finding] = []
     for u in p.untrusted:
         if u.get("ifindex") is None:
@@ -393,11 +451,13 @@ def check_untrusted_ports(c: ElastiflowClient, p: Policy, w: Window) -> list[Fin
                         evidence=r,
                     )
                 )
+    logger.debug("check_untrusted_ports: sortie | {} constat(s)", len(out))
     return out
 
 
 def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Part de chaque classe par sortie et sens vs max_share_pct (part du trafic échantillonné)."""
+    logger.debug("check_class_share: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
@@ -405,7 +465,7 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
             total = sum(r["bytes"] for r in rows) or 1.0
             samples = sum(r["samples"] for r in rows)
             for cls in p.classes:
-                if cls.max_share_pct is None:
+                if cls.max_share_pct is None and cls.car_bps is None:
                     continue
                 cls_rows = [r for r in rows if r["dscp"] in cls.dscp]
                 share = 100 * sum(r["bytes"] for r in cls_rows) / total
@@ -425,6 +485,7 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
                         combined=_combined(cls_rows),
                     )
                 )
+    logger.debug("check_class_share: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -537,7 +598,7 @@ def check_saturation_and_overflow(
             # seuls les échantillons des buckets évaluables fondent les verdicts de débordement
             evaluable_samples = sum(samples_by_ts.get(ts, 0) for ts in evaluable)
             for cls in p.classes:
-                if cls.max_share_pct is None:
+                if cls.max_share_pct is None and cls.car_bps is None:
                     continue
                 if not _enough(evaluable_samples, p):
                     out.append(
@@ -568,7 +629,9 @@ def check_saturation_and_overflow(
                         )
                     )
                     continue
-                budget = ex.capacity_bps * cls.max_share_pct / 100
+                budget = ex.capacity_bps * cls.max_share_pct / 100 if cls.max_share_pct is not None else cls.car_bps
+                if cls.car_bps is not None and cls.max_share_pct is not None:
+                    budget = min(budget, cls.car_bps)  # le car configuré est le garant effectif
                 over: list[int] = []
                 busy: list[int] = []
                 for ts in evaluable:
@@ -612,10 +675,9 @@ def check_saturation_and_overflow(
     return out
 
 
-def check_congestion(
-    c: ElastiflowClient, p: Policy, w: Window, counters: CounterSource, only_site: str | None = None
-) -> list[Finding]:
-    """Indices de congestion : marques ECN CE (indirect) et drops par file (preuve directe, si source branchée)."""
+def check_congestion(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """Indice indirect de congestion : marques ECN CE vues en sortie."""
+    logger.debug("check_congestion: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
         rows = c.bytes_by(w, ["ecn"], exit_filter(ex.exporter, ex.ifindex, Direction.EGRESS.value))
@@ -635,25 +697,7 @@ def check_congestion(
                 samples=samples,
             )
         )
-        try:
-            drops = counters.queue_drops(ex.exporter, ex.ifindex, w)
-        except NotImplementedError:
-            logger.debug("Source de compteurs non implémentée pour {}", ex.exporter)
-            continue
-        if drops:
-            lost = sum(drops.values())
-            out.append(
-                _finding(
-                    p,
-                    "congestion_drops",
-                    Severity.CRIT if lost else Severity.OK,
-                    f"{site.name}/{ex.name}",
-                    f"{lost} paquets droppés",
-                    site=site,
-                    direction="egress",
-                    evidence=drops,
-                )
-            )
+    logger.debug("check_congestion: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -766,6 +810,7 @@ def check_counter_consistency(c: ElastiflowClient, p: Policy, w: Window, only_si
 
 def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Répartition entre sorties d'un site : détecte une sortie « secours » qui porte du trafic (bascule)."""
+    logger.debug("check_exit_balance: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site in p.sites:
         if only_site and site.name != only_site:
@@ -791,7 +836,216 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
                         samples=totals[ex.name][1],
                     )
                 )
+    logger.debug("check_exit_balance: sortie | {} constat(s)", len(out))
     return out
+
+
+# Signatures d'encapsulation (issue #30) : après IPsec, GRE ou SD-WAN, seul l'en-tête externe et son
+# DSCP sont visibles. Est « encapsulé » : GRE/ESP (protocoles IP 47 et 50), IKE 500 et NAT-T 4500
+# (établissement IPsec, cf. docs constructeurs : https://documentation.extremenetworks.com/SD-WAN/latest/
+# ExtremeCloud_SD-WAN_Online_Help/Content/network/Prerequisites.htm et https://www.cisco.com/c/en/us/
+# solutions/collateral/enterprise-networks/sd-wan/sd-wan-remote-access-wp.html), et les ports UDP
+# SD-WAN documentés : Cisco Catalyst/Viptela 12346 (base, sauts 12366/12386/12406/12426 — Design
+# Guide Cisco SD-WAN : https://www.cisco.com/c/en/us/td/docs/solutions/CVD/SDWAN/cisco-sd-wan-design-guide.html),
+# VMware VeloCloud VCMP 2426 (https://www.dell.com/support/manuals/en-us/sd-wan-edge-3000/edge3400-aag/
+# dell-emc-sd-wan-edge-3400-installation-considerations), Silver Peak tunnel UDP 4163
+# (https://www.silver-peak.com/sites/default/files/userdocs/speak_ports_used_july2015.pdf).
+TUNNEL_IP_PROTOS = (47, 50)
+TUNNEL_UDP_PORTS = (500, 4500, 2426, 4163, 12346, 12366, 12386, 12406, 12426)
+
+
+def _tunnel_ports_clause() -> dict:
+    """Clause « UDP sur un port de tunnel/SD-WAN » (source ou destination)."""
+    logger.debug("_tunnel_ports_clause: entrée")
+    clause = {
+        "bool": {
+            "should": [
+                {"terms": {FIELDS["dst_port"]: list(TUNNEL_UDP_PORTS)}},
+                {"terms": {FIELDS["src_port"]: list(TUNNEL_UDP_PORTS)}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+    logger.debug("_tunnel_ports_clause: sortie")
+    return clause
+
+
+def _tunnel_filter(base: dict) -> dict:
+    """Filtre « trafic encapsulé » : protocole IP GRE/ESP, ou UDP sur un port de tunnel/SD-WAN."""
+    logger.debug("_tunnel_filter: entrée")
+    filtre = _and(
+        base,
+        {
+            "bool": {
+                "should": [
+                    {"terms": {FIELDS["ip_proto"]: list(TUNNEL_IP_PROTOS)}},
+                    _and({"term": {FIELDS["proto"]: "udp"}}, _tunnel_ports_clause()),
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+    )
+    logger.debug("_tunnel_filter: sortie")
+    return filtre
+
+
+def check_encapsulated_traffic(
+    c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None
+) -> list[Finding]:
+    """Part du trafic encapsulé (IPsec, GRE, SD-WAN) par sortie et sens, et DSCP externe (issue #30).
+
+    Au-delà de ``encapsulated_inconclusive_pct`` (majorité par défaut), l'audit de classes n'est
+    pas concluant : mesurer avant le tunnel. Total et trafic tunnel sont mesurés par la même
+    agrégation sur le DSCP (toujours présent) : les enregistrements sans ce champ ne faussent
+    ni l'un ni l'autre. La signature GRE/ESP (protocole IP) reste la partie la moins certaine —
+    un champ ``ip_proto`` absent sous-estime le trafic tunnel, donc la part, sans inventer de
+    verdict. Le DSCP externe du trafic encapsulé est une observation : la copie du DSCP interne
+    (classification avant encapsulation, marquage statique) ne se vérifie pas de l'extérieur,
+    le constat reste non concluant avec sa consigne de vérification.
+    """
+    logger.debug("check_encapsulated_traffic: entrée")
+    out: list[Finding] = []
+    th = p.thresholds
+    for site, ex in _exits(p, only_site):
+        for d in _DIRS:
+            base = exit_filter(ex.exporter, ex.ifindex, d)
+            rows = c.bytes_by(w, ["dscp"], base)
+            total_bytes = sum(r["bytes"] for r in rows)
+            samples = sum(r["samples"] for r in rows)
+            subject = f"{site.name}/{ex.name}"
+            if not samples:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        "aucun enregistrement : exporteur muet ou champs à vérifier",
+                        site=site,
+                        direction=d,
+                    )
+                )
+                continue
+            if not _enough(samples, p):
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        f"trop peu d'échantillons ({samples}) pour juger la part encapsulée",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                    )
+                )
+                continue
+            tunnel_rows = c.bytes_by(w, ["dscp"], _tunnel_filter(base))
+            tunnel_bytes = sum(r["bytes"] for r in tunnel_rows)
+            share = 100.0 * tunnel_bytes / total_bytes if total_bytes else 0.0
+            evidence = {
+                "tunnel_bytes": tunnel_bytes,
+                "total_bytes": total_bytes,
+                "share_pct": round(share, 2),
+            }
+            if share > th["encapsulated_inconclusive_pct"]:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.INCONCLUSIVE,
+                        subject,
+                        f"{share:.1f}% du trafic est encapsulé (IPsec/GRE/SD-WAN) : "
+                        "audit de classes non concluant, mesurer avant le tunnel",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence=evidence,
+                    )
+                )
+            else:
+                out.append(
+                    _finding(
+                        p,
+                        "encapsulated",
+                        Severity.OK,
+                        subject,
+                        f"{share:.1f}% du trafic est encapsulé (IPsec/GRE/SD-WAN)",
+                        site=site,
+                        direction=d,
+                        samples=samples,
+                        evidence=evidence,
+                    )
+                )
+            out += _constat_dscp_tunnel(c, p, w, base, subject, site, d, tunnel_rows, tunnel_bytes)
+    logger.debug("check_encapsulated_traffic: sortie | {} constat(s)", len(out))
+    return out
+
+
+def _constat_dscp_tunnel(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    base: dict,
+    subject: str,
+    site: Site,
+    direction: str,
+    tunnel_rows: list[dict],
+    tunnel_bytes: float,
+) -> list[Finding]:
+    """DSCP externe du trafic encapsulé : observation, jamais un verdict sur la copie interne.
+
+    La copie du DSCP interne (classification avant encapsulation — ``pre-classify`` chez
+    Cisco —, recopie ou marquage statique de l'en-tête externe) ne se prouve pas depuis
+    l'en-tête externe : un DSCP par défaut peut être la copie correcte d'un trafic best
+    effort interne, un DSCP marqué un marquage statique du tunnel. Le constat reste donc
+    INCONCLUSIVE et porte la répartition observée avec la consigne de vérification.
+    """
+    logger.debug("_constat_dscp_tunnel: entrée")
+    if tunnel_bytes <= 0:
+        logger.debug("_constat_dscp_tunnel: sortie | rien à observer (pas de trafic encapsulé)")
+        return []
+    tunnel_samples = sum(r["samples"] for r in tunnel_rows)
+    if not _enough(tunnel_samples, p):
+        logger.debug("_constat_dscp_tunnel: sortie | non concluant (échantillons)")
+        return [
+            _finding(
+                p,
+                "encapsulated_dscp",
+                Severity.INCONCLUSIVE,
+                subject,
+                f"trop peu d'échantillons ({tunnel_samples}) pour observer le DSCP du trafic encapsulé",
+                site=site,
+                direction=direction,
+                samples=tunnel_samples,
+            )
+        ]
+    default_bytes = sum(r["bytes"] for r in tunnel_rows if int(r["dscp"]) == 0)
+    default_share = 100.0 * default_bytes / tunnel_bytes
+    msg = (
+        f"DSCP externe du trafic encapsulé : {default_share:.1f}% par défaut, "
+        f"{100 - default_share:.1f}% marqué — copie du DSCP interne non vérifiable depuis "
+        "l'en-tête externe, contrôler la configuration du tunnel (classification avant "
+        "encapsulation / pre-classify, recopie ou marquage statique)"
+    )
+    logger.debug("_constat_dscp_tunnel: sortie | observation émise")
+    return [
+        _finding(
+            p,
+            "encapsulated_dscp",
+            Severity.INCONCLUSIVE,
+            subject,
+            msg,
+            site=site,
+            direction=direction,
+            samples=tunnel_samples,
+            evidence={
+                "default_dscp_share_pct": round(default_share, 2),
+                "marked_dscp_share_pct": round(100 - default_share, 2),
+                "tunnel_bytes": tunnel_bytes,
+            },
+        )
+    ]
 
 
 def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
@@ -801,6 +1055,7 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
     précision est le plus grand parmi ceux qui portent au moins 10 % des échantillons (cas défavorable) ; pour le coût,
     le plus petit.
     """
+    logger.debug("check_sampling_adequacy: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     th = p.thresholds
     sp = params_from_thresholds(th)
@@ -865,11 +1120,13 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                         evidence={"samples_per_s": cost},
                     )
                 )
+    logger.debug("check_sampling_adequacy: sortie | {} constat(s)", len(out))
     return out
 
 
 def check_sampling_drift(c: ElastiflowClient, p: Policy, w: Window, cal: Calibration) -> list[Finding]:
     """Sampling configuré (calibration) vs sampling reçu dans ElastiFlow, interface par interface."""
+    logger.debug("check_sampling_drift: entrée | exporteurs={}", len(cal.exporters))
     out: list[Finding] = []
     for name, ex_cal in cal.exporters.items():
         rows = c.bytes_by(w, ["in_if", "sampling"], {"term": {FIELDS["exporter"]: name}})
@@ -888,6 +1145,7 @@ def check_sampling_drift(c: ElastiflowClient, p: Policy, w: Window, cal: Calibra
             else:
                 msg = f"configuré 1:{itf.sampling_rate}, reçu {sorted(rates)}"
                 out.append(_finding(p, "sampling_drift", Severity.WARN, subject, msg, evidence=rates))
+    logger.debug("check_sampling_drift: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -897,7 +1155,9 @@ _COMPLETE = "revalidation complète"
 
 def _rates(e: ExporterCal) -> set[int]:
     """Sampling-rates configurés sur les interfaces d'un exporteur."""
-    return {i.sampling_rate for i in e.interfaces if i.sampling_rate is not None}
+    rates = {i.sampling_rate for i in e.interfaces if i.sampling_rate is not None}
+    logger.debug("_rates: sortie | {} taux sur {} interface(s)", len(rates), len(e.interfaces))
+    return rates
 
 
 def _scope_drift(e: ExporterCal, v: Validation, cal: Calibration) -> list[str]:
@@ -988,7 +1248,9 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     out: list[Finding] = []
 
     def add(subject: str, msg: str) -> None:
+        logger.debug("check_calibration.add: entrée | subject={}", subject)
         out.append(_finding(p, "calibration", Severity.WARN, subject, msg))
+        logger.debug("check_calibration.add: sortie | {} constat(s)", len(out))
 
     if cal.sampling_already_applied is None:
         add("elastiflow", "facteur d'échantillonnage non validé (P6) : volumes potentiellement faux d'un facteur N")
@@ -1016,7 +1278,6 @@ def run_all(
     c: ElastiflowClient,
     p: Policy,
     w: Window,
-    counters: CounterSource | None = None,
     only_site: str | None = None,
     cal: Calibration | None = None,
 ) -> list[Finding]:
@@ -1026,15 +1287,15 @@ def run_all(
         c: Client ElastiFlow.
         p: Politique théorique.
         w: Fenêtre d'analyse.
-        counters: Source de compteurs de drops (optionnelle).
         only_site: Restreint l'audit à un site.
         cal: Calibration issue de la validation ElastiFlow (optionnelle).
 
     Returns:
         Liste des constats.
     """
-    counters = counters or NullCounters()
+    logger.debug("run_all: entrée | sites={} site={} calibration={}", len(p.sites), only_site, cal is not None)
     findings: list[Finding] = []
+    findings += check_capacity(p, only_site)
     findings += check_marking_conformity(c, p, w, only_site)
     findings += check_dscp_plan(c, p, w, only_site)
     findings += check_untrusted_ports(c, p, w)
@@ -1042,10 +1303,12 @@ def run_all(
     findings += check_port_ranges(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
-    findings += check_congestion(c, p, w, counters, only_site)
+    findings += check_congestion(c, p, w, only_site)
     findings += check_exit_balance(c, p, w, only_site)
+    findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
     if cal is not None:
         findings += check_calibration(p, cal)
         findings += check_sampling_drift(c, p, w, cal)
+    logger.debug("run_all: sortie | {} constat(s)", len(findings))
     return findings

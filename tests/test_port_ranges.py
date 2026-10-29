@@ -134,7 +134,7 @@ def test_non_voice_class_flagged_without_measure() -> None:
 
 
 def test_run_all_includes_port_range(monkeypatch) -> None:
-    import qos_audit.checks as checks
+    from qos_audit import checks
 
     for name in dir(checks):
         if name.startswith("check_") and name != "check_port_ranges":

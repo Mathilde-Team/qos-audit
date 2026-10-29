@@ -131,3 +131,114 @@ def test_cli_extract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert (tmp_path / "policy.extracted.yaml").read_text(encoding="utf-8").startswith("# Généré par")
     assert "| rtr-a-01 |" in (tmp_path / "extraction_report.md").read_text(encoding="utf-8")
     assert (tmp_path / "qos_extract.json").exists()
+
+
+def test_parse_car_queue_dot1p_maptable_acces_vlan() -> None:
+    cfg = """#
+traffic behavior B-VOIX
+ remark dscp ef
+ car cir 10000 cbs 1250000 ebs 0 green pass red discard
+ queue bandwidth 20000
+traffic behavior B-PC
+ remark dscp af21
+ car cir percent 20
+ queue bandwidth percent 5
+traffic behavior B-DOT1P
+ remark dot1p 5
+ remark dscp af31
+#
+qos map-table MT-DSCP dscp-dot1p
+#
+interface GigabitEthernet1/0/1
+ port access vlan 10
+interface GigabitEthernet1/0/2
+ port access vlan 20
+#
+qos apply policy MARK-ACCES global inbound
+qos vlan-policy MARK-ACCES vlan 10-20 inbound
+#
+return
+"""
+    dev = parse_device(cfg)
+    bv = dev.behaviors["B-VOIX"]
+    assert bv.car_cir_bps == 10_000_000 and bv.queue_bps == 20_000_000
+    pc = dev.behaviors["B-PC"]
+    assert pc.car_pct == 20 and pc.queue_pct == 5
+    bd = dev.behaviors["B-DOT1P"]
+    assert bd.remark_dscp == 26  # remark dscp reste lu ; dot1p seulement signalé
+    assert any(i.code == "remark_dot1p_non_traduit" for i in dev.issues)
+    assert dev.map_tables == {"MT-DSCP": "dscp-dot1p"}
+    assert any(i.code == "map_table_non_modelisee" for i in dev.issues)
+    assert dev.interfaces["GigabitEthernet1/0/1"].access_vlans == [10]
+    assert dev.global_apps == [("MARK-ACCES", "inbound")]
+    assert dev.vlan_apps == [("MARK-ACCES", "inbound", "10-20")]
+
+
+def test_untrusted_global_and_vlan_policy() -> None:
+    cfg = """#
+traffic classifier DEFAUT operator and
+ if-match any
+traffic behavior B-BF
+ remark dscp default
+qos policy MARK-ACCES
+ classifier DEFAUT behavior B-BF
+traffic behavior B-AUTRE
+ remark dscp af31
+qos policy OTHER
+ classifier DEFAUT behavior B-AUTRE
+#
+interface GigabitEthernet1/0/1
+ port access vlan 10
+interface GigabitEthernet1/0/2
+ port access vlan 20
+ qos apply policy OTHER inbound
+interface GigabitEthernet1/0/3
+ qos trust dscp
+#
+qos apply policy MARK-ACCES global inbound
+qos vlan-policy MARK-ACCES vlan 10-20 inbound
+#
+return
+"""
+    policy, _ = build_policy([parse_device(cfg)])
+    untrusted = policy["trust"]["untrusted"]
+    names = {u["ifname"] for u in untrusted}
+    # policy globale entrante : interfaces sans policy entrante propre (1/0/1, 1/0/3) ;
+    # 1/0/2 a sa propre policy entrante -> non couverte
+    assert "GigabitEthernet1/0/1" in names and "GigabitEthernet1/0/3" in names
+    assert "GigabitEthernet1/0/2" not in names
+    # frontière de confiance déclarée : le mode trust est porté par l'entrée
+    u13 = next(u for u in untrusted if u["ifname"] == "GigabitEthernet1/0/3")
+    assert u13["trust"] == "dscp"
+    trusted = policy["trust"]["trusted"]
+    assert {"exporter": "inconnu", "ifname": "GigabitEthernet1/0/3", "mode": "dscp"} in trusted
+
+
+def test_untrusted_global_trust_et_remise_a_zero() -> None:
+    cfg = """#
+traffic classifier DEFAUT operator and
+ if-match any
+traffic behavior B-BF
+ remark dscp default
+qos policy MARK-ACCES
+ classifier DEFAUT behavior B-BF
+#
+interface GigabitEthernet1/0/3
+ qos trust dscp
+#
+qos apply policy MARK-ACCES global inbound
+#
+return
+"""
+    dev = parse_device(cfg)
+    policy, _ = build_policy([dev])
+    assert any(i.code == "trust_et_remise_a_zero" for i in dev.issues)
+    assert any(u["ifname"] == "GigabitEthernet1/0/3" for u in policy["trust"]["untrusted"])
+
+
+def test_car_budget_in_policy_classes() -> None:
+    dev = parse_device((FIX / "rtr-a-01.cfg").read_text(encoding="utf-8"), source="rtr-a-01.cfg")
+    policy, _ = build_policy([dev])
+    af21 = next(c for c in policy["classes"] if c["name"] == "af21")
+    assert af21["car_bps"] == 5_000_000  # car cir 5000 (kbps) sur B-D2
+    assert all("car_bps" not in c for c in policy["classes"] if c["name"] != "af21")

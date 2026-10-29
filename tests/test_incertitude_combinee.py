@@ -2,6 +2,7 @@
 
 import math
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from test_checks import FakeClient
@@ -11,8 +12,6 @@ from qos_audit.checks import check_class_share, check_marking_conformity, check_
 from qos_audit.elastiflow import Window
 from qos_audit.models import combined_error_pct, rel_error_pct
 from qos_audit.policy import load_policy
-
-from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 W = Window(datetime(2026, 10, 24, 10, tzinfo=UTC), datetime(2026, 10, 24, 11, tzinfo=UTC))

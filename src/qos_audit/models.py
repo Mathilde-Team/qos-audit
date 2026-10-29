@@ -38,6 +38,7 @@ def rel_error_pct(samples: int, margin: float = 1.0) -> float:
     Returns:
         Erreur relative en pourcentage (``inf`` si aucun échantillon).
     """
+    logger.debug("rel_error_pct: entrée | n={} marge={}", samples, margin)
     err = 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
     logger.debug("rel_error_pct: retour | n={} -> {:.1f} %", samples, err)
     return err
@@ -58,6 +59,7 @@ def combined_error_pct(total_bytes: float, sum_sq: float) -> tuple[float, float]
     Returns:
         ``(erreur en %, nombre d'échantillons effectif (Σ x_i)² / Σ x_i²)`` ; ``(inf, 0)`` sans octets.
     """
+    logger.debug("combined_error_pct: entrée | octets={} somme_des_carrés={}", total_bytes, sum_sq)
     if total_bytes <= 0 or sum_sq <= 0:
         logger.debug("combined_error_pct: retour | aucun octet")
         return float("inf"), 0.0
@@ -118,7 +120,7 @@ class FlowMatch:
     dst_cidr: str | None = None
     src_ports: tuple[int, int] | None = None
     dst_ports: tuple[int, int] | None = None
-    excludes: tuple["FlowMatch", ...] = ()
+    excludes: tuple[FlowMatch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,7 @@ class QosClass:
     dscp: frozenset[int]
     priority: int
     max_share_pct: float | None = None
+    car_bps: int | None = None  # budget théorique ``car cir`` de la configuration (bps)
     match: tuple[FlowMatch, ...] = ()
     dscp_confirmed: bool = True
 
@@ -143,6 +146,8 @@ class Exit:
     speed_bps: int
     capacity_bps: int
     role: str = "principal"
+    # False quand capacity_bps manquait dans la politique et vaut speed_bps par repli (contrôle `capacity`, #13).
+    capacity_declared: bool = True
 
 
 @dataclass(frozen=True)
@@ -166,7 +171,9 @@ class Policy:
 
     def all_dscp(self) -> frozenset[int]:
         """Ensemble des DSCP prévus par le plan."""
-        return frozenset(d for c in self.classes for d in c.dscp)
+        values = frozenset(d for c in self.classes for d in c.dscp)
+        logger.debug("Policy.all_dscp: sortie | {} valeur(s)", len(values))
+        return values
 
 
 @dataclass

@@ -35,6 +35,7 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "counter_min_coverage_pct": 50,  # en dessous : repli sur les flux (compteurs trop lacunaires)
     "counter_consistency_max_dev_pct": 20,  # écart flux extrapolés vs compteurs au-delà duquel on s'alerte
     "port_range_max_ports": WIDE_PORT_RANGE,  # plage sans IP au-delà : trop large (#32)
+    "encapsulated_inconclusive_pct": 50,  # part du trafic encapsulé au-delà : audit non concluant (#30)
     "voice_max_packet_bytes": 300,  # paquet voix : G.711 20 ms = 200 o IP ; au-delà, pas de la voix
     "port_range_non_voice_max_pct": 10,  # part tolérée d'octets non voix dans une classe voix par plage
 }
@@ -49,27 +50,47 @@ def parse_ports(spec: str | int | None) -> tuple[int, int] | None:
     Returns:
         Tuple (min, max) ou ``None``.
     """
+    logger.debug("parse_ports: entrée | spec={}", spec)
     if spec is None or spec == "":
+        logger.debug("parse_ports: sortie | vide")
         return None
     lo, _, hi = str(spec).partition("-")
-    return int(lo), int(hi or lo)
+    res = int(lo), int(hi or lo)
+    logger.debug("parse_ports: sortie | {}", res)
+    return res
 
 
 def _load_exit(raw: dict) -> Exit:
+    """Construit une sortie WAN depuis la politique YAML.
+
+    Sans ``capacity_bps``, la capacité retombe sur ``speed_bps`` et la sortie est marquée
+    ``capacity_declared=False`` : le contrôle ``capacity`` (#13) le signale dans le rapport.
+
+    Args:
+        raw: Entrée ``exits`` d'un site.
+
+    Returns:
+        La sortie.
+    """
+    logger.debug("_load_exit: entrée | {}", raw.get("name"))
     capacity = raw.get("capacity_bps")
-    if capacity is None:
+    declared = capacity is not None
+    if not declared:
         logger.warning(
             "Sortie {}: capacity_bps absent, repli sur speed_bps (utilisation sous-estimée si CIR < port)", raw["name"]
         )
         capacity = raw["speed_bps"]
-    return Exit(
+    ex = Exit(
         name=raw["name"],
         exporter=raw["exporter"],
         ifindex=int(raw["ifindex"]),
         speed_bps=int(raw["speed_bps"]),
         capacity_bps=int(capacity),
         role=raw.get("role", "principal"),
+        capacity_declared=declared,
     )
+    logger.debug("_load_exit: sortie | {} capacity_bps={} déclarée={}", ex.name, ex.capacity_bps, declared)
+    return ex
 
 
 def load_policy(path: Path) -> Policy:
@@ -81,6 +102,7 @@ def load_policy(path: Path) -> Policy:
     Returns:
         La politique typée.
     """
+    logger.debug("load_policy: entrée | {}", path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     classes = [
         QosClass(
@@ -88,6 +110,7 @@ def load_policy(path: Path) -> Policy:
             dscp=frozenset(c["dscp"]),
             priority=c["priority"],
             max_share_pct=c.get("max_share_pct"),
+            car_bps=c.get("car_bps"),
             dscp_confirmed=c.get("dscp_confirmed", True),
             match=tuple(
                 FlowMatch(
@@ -117,6 +140,7 @@ def load_policy(path: Path) -> Policy:
     for s in sites:
         if not 1 <= len(s.exits) <= 4:
             logger.warning("Site {}: {} sortie(s) (attendu 1 à 4)", s.name, len(s.exits))
+    logger.debug("load_policy: sortie | {} classe(s), {} site(s)", len(classes), len(sites))
     return Policy(
         classes=classes,
         untrusted=trust.get("untrusted", []),

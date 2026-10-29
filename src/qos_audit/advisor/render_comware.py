@@ -5,9 +5,9 @@ La syntaxe est à valider selon le modèle et la version (Comware 7 supposé).
 
 from __future__ import annotations
 
-from qos_audit.advisor.recommend import Recommendation
-
 from loguru import logger
+
+from qos_audit.advisor.recommend import Recommendation
 
 __all__ = ["DSCP_KEYWORDS", "render_marking_policy"]
 
@@ -51,4 +51,6 @@ def render_marking_policy(recos: list[Recommendation], policy_name: str = "QOS-M
             "",
             f"# interface <LAN> ; qos apply policy {policy_name} inbound",
         ]
-    return "\n".join(lines) + "\n"
+    cfg = "\n".join(lines) + "\n"
+    logger.debug("render_marking_policy: sortie | {} ligne(s)", len(lines))
+    return cfg
