@@ -66,7 +66,9 @@ soit ±24 % au lieu de ±10 %.
 - **Classes de l'opérateur** : D1, D2 et D3 (AF31, AF21, AF11) sont des hypothèses tant que l'opérateur ne les a pas confirmées
   par écrit. « EF 45 » reste ambigu (DSCP 45 ou part de bande).
 - **Pas de classe sous BF chez l'opérateur** : le trafic de masse (sauvegarde) ne peut pas être « abaissé » de bout en bout ;
-  seul un shaper local ou une plage horaire le contient.
+  seul un shaper local ou une plage horaire le contient. `advise` en produit un brouillon (débit par défaut 20 % de la capacité,
+  hypothèse) et `bulk_business_hours` repère la sauvegarde hors plage sur une sortie chargée ; les deux supposent que le
+  catalogue identifie la sauvegarde par protocole et ports.
 - **Marge sur les octets** : 1,25 par défaut sur l'incertitude affichée ; à ajuster d'après les séries B et C de la validation.
 
 ## Ajouts de la session 04

@@ -20,7 +20,25 @@ Les classes cibles sont celles de l'opérateur (EF, AF41, D1, D2, D3, BF).
 
 - **Voix** : EF, avec plafond (`max_share_pct`) pour éviter la famine des autres classes. Signalisation (SIP) en D1 (AF31 supposé).
 - **Sauvegarde** : BF. L'opérateur n'a pas de classe sous BF : le trafic de masse se contient par un shaper local ou une plage horaire.
-  Le test Q5-3 de la validation (CS1) dit ce que l'opérateur fait d'un marquage inférieur. Un flux déjà en DSCP 0 n'est pas reproposé.
+  Le test Q5-3 de la validation (CS1) dit ce que l'opérateur fait d'un marquage inférieur. Un flux déjà en DSCP 0 n'est pas reproposé
+  au marquage.
+
+## Trafic de masse : shaper de sortie (#34)
+
+Une application du catalogue marquée `profile: {bulk: true}` donne une recommandation **contenir** pour chaque sortie où elle
+apparaît (en plus d'un éventuel « marquer ») et `advise` écrit `brouillon_shaper.cfg` :
+
+- débit du shaper : `profile.shape_pct` % de `capacity_bps` de la sortie, **20 % par défaut** (hypothèse à ajuster) ;
+- `profile.plage_horaire` (`"22-06"`, heures locales de l'équipement, fin exclue) : plage où la sauvegarde est libre ; l'ACL
+  du shaper est bornée par un `time-range HORS-<APP>` couvrant le reste de la journée (deux périodes si la plage ne franchit
+  pas minuit). Sans plage, le shaper est permanent ;
+- une policy `QOS-SHAPE-<SITE>-<SORTIE>` par sortie (`gts cir` en kbit/s dans le behavior), à appliquer `outbound` sur le WAN.
+
+Syntaxe Comware 7 supposée (`time-range … daily`, `gts cir` dans un `traffic behavior`) : à valider selon le modèle et la
+version, sur un site pilote. L'alternative D3 (si l'opérateur confirme un CIR sur D3) n'est pas générée.
+
+`audit --catalog` active le contrôle `bulk_business_hours` (voir CONTROLES.md), `--timezone` (Europe/Paris par défaut) fixe le
+fuseau des plages.
 - **SMTP** : D3, classe de données la moins prioritaire (courriel élastique). Utiliser `what_if` pour chiffrer le coût d'une classe plus haute.
 
 ## Boucle avec l'extraction
@@ -39,4 +57,4 @@ match recréé doit correspondre à la recommandation (test d'aller-retour dans 
 
 - Heuristique de profil pour détecter les sauvegardes non cataloguées (volume soutenu, longue durée, paquets de 1500 octets, plage nocturne).
 - IP serveur dans la découverte, pour exploiter `servers_cidr`.
-- Rendu des classes de sortie (shaper, policer).
+- Rendu des classes de sortie (policer ; shaper de masse fait, #34).

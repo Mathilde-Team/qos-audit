@@ -23,6 +23,7 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "overflow_min_buckets": 3,
     "unknown_dscp_max_pct": 1,
     "secours_active_max_pct": 5,
+    "bulk_share_warn_pct": 20,
     "bytes_error_margin": 1.25,
     "sampling_floor_ratio": 0.05,
     "sampling_window_s": 300,

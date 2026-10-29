@@ -43,6 +43,10 @@ def test_compare_reports() -> None:
 def test_no_recommendation_when_already_compliant() -> None:
     p = load_policy(ROOT / "policies" / "policy.example.yaml")
     apps = load_catalog(ROOT / "catalogs" / "catalog.example.yaml")
-    # sauvegarde -> bf (DSCP 0) : un flux déjà en DSCP 0 est conforme, rien à proposer
+    # sauvegarde -> bf (DSCP 0) : un flux déjà en DSCP 0 est conforme, aucun marquage à proposer ;
+    # trafic de masse (profile.bulk) : seule la recommandation « contenir » subsiste (#34)
     clusters = [FlowCluster("site-a", "wan1", "tcp", 6160, 0, 5e8, 400, 12.0)]
+    assert [r.action for r in recommend(clusters, apps, p)] == ["contenir"]
+    # application conforme sans profil de masse : rien à proposer
+    clusters = [FlowCluster("site-a", "wan1", "udp", 20000, 46, 5e8, 400, 12.0)]
     assert recommend(clusters, apps, p) == []

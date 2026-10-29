@@ -51,6 +51,10 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
   `qos-audit sampling` (plancher de bucket selon le sampling, `sampling.min_bucket_seconds`), signalement d'un bucket
   sous ce plancher dans le constat `saturation` en repli sur les flux, et constat WARN `microburst` quand des marques ECN CE
   (`congestion_ecn`) coexistent avec une saturation au bucket sous le seuil d'alerte.
+- Trafic de masse sans classe sous BF (#34) : recommandation « contenir » pour les applications `profile.bulk` du
+  catalogue et brouillon `brouillon_shaper.cfg` (`gts cir` par sortie, ACL bornée par un `time-range` hors de
+  `profile.plage_horaire`, débit `profile.shape_pct`, 20 % de la capacité par défaut) ; contrôle WARN
+  `bulk_business_hours` (`audit --catalog`, `--timezone`, seuil `bulk_share_warn_pct`).
 - Recette synthétique des contrôles (#5, #36) : `tests/test_recette_synthetique.py` rejoue sur un client factice les
   défauts de la série R du banc (voix en TOS 0, EF depuis un port non fiable, DSCP hors plan, part de classe, bascule
   de sortie, sampling trop grossier), la congestion, la dérive de sampling, le client ElastiFlow (pagination,
