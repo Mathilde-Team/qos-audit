@@ -218,7 +218,15 @@ class _FakeOS:
             }
         if "flow.input.ifindex" in brut:
             # Sens entrant du même groupe : quasi rien (asymétrie).
-            return {"aggregations": {"g": {"buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0e6}, "q": {"value": 1.0e10}, "doc_count": 100}]}}}
+            return {
+                "aggregations": {
+                    "g": {
+                        "buckets": [
+                            {"key": {"dscp": 0}, "b": {"value": 1.0e6}, "q": {"value": 1.0e10}, "doc_count": 100}
+                        ]
+                    }
+                }
+            }
         if "network.transport" in brut:
             # Groupes (proto, dst_port, dscp) : un flux massique non catalogué.
             return {
@@ -236,7 +244,13 @@ class _FakeOS:
                 }
             }
         # Total sortant de la sortie.
-        return {"aggregations": {"g": {"buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0e10}, "q": {"value": 1.0e17}, "doc_count": 1000}]}}}
+        return {
+            "aggregations": {
+                "g": {
+                    "buckets": [{"key": {"dscp": 0}, "b": {"value": 1.0e10}, "q": {"value": 1.0e17}, "doc_count": 1000}]
+                }
+            }
+        }
 
 
 def test_discover_remplit_le_profil() -> None:
