@@ -15,14 +15,7 @@ from loguru import logger
 
 from qos_audit.calibration import Calibration, ExporterCal, Validation
 from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
-from qos_audit.elastiflow import (
-    FIELDS,
-    ElastiflowClient,
-    Window,
-    double_sampling_filtered,
-    double_sampling_unresolved,
-    exit_filter,
-)
+from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import (
     Direction,
     Exit,
@@ -165,32 +158,6 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
     rates = rates_from_counters(samples, w, d)
     logger.debug("_exit_rates: sortie | usable={}", rates.usable)
     return rates
-
-
-_DOUBLE_COUNTED = (
-    "échantillonnage entrée+sortie sans champ d'échantillonneur (sampler_if) : un paquet peut être compté deux fois, "
-    "volume non concluant (#26)"
-)
-
-
-def _double_counted(p: Policy, check: str, site: Site, ex: Exit, d: str | None) -> Finding | None:
-    """Constat non concluant pour un contrôle de volume dont l'exporteur double-compte sans remède (#26, option C)."""
-    logger.debug("_double_counted: entrée | {} {}/{} sens={}", check, site.name, ex.name, d)
-    if not double_sampling_unresolved(ex.exporter):
-        logger.debug("_double_counted: sortie | pas de double comptage non traité")
-        return None
-    f = _finding(
-        p,
-        check,
-        Severity.INCONCLUSIVE,
-        f"{site.name}/{ex.name}",
-        _DOUBLE_COUNTED,
-        site=site,
-        direction=d,
-        evidence={"exporter": ex.exporter, "sampling_direction": "both"},
-    )
-    logger.debug("_double_counted: sortie | non concluant")
-    return f
 
 
 def _exits(p: Policy, only_site: str | None):
@@ -475,9 +442,6 @@ def check_saturation_and_overflow(
     th = p.thresholds
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
-            if (skip := _double_counted(p, "saturation", site, ex, d)) is not None:
-                out.append(skip)
-                continue
             series = c.bytes_timeseries(w, exit_filter(ex.exporter, ex.ifindex, d))
             by_ts: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
             samples_by_ts: dict[int, int] = defaultdict(int)
@@ -717,9 +681,6 @@ def check_counter_consistency(c: ElastiflowClient, p: Policy, w: Window, only_si
     th = p.thresholds
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
-            if (skip := _double_counted(p, "counter_consistency", site, ex, d)) is not None:
-                out.append(skip)
-                continue
             rates = _exit_rates(c, ex, w, d)
             if rates is None or not rates.usable:
                 continue  # rien à comparer : le repli éventuel est déjà signalé par « saturation »
@@ -817,24 +778,6 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
     out: list[Finding] = []
     for site in p.sites:
         if only_site and site.name != only_site:
-            continue
-        doubled = [ex for ex in site.exits if double_sampling_unresolved(ex.exporter)]
-        if doubled:
-            # une sortie comptée deux fois fausse la part de toutes les autres : le site entier est non concluant
-            out += [
-                _finding(
-                    p,
-                    "exit_balance",
-                    Severity.INCONCLUSIVE,
-                    f"{site.name}/{ex.name}",
-                    f"{_DOUBLE_COUNTED} : {', '.join(sorted({d.exporter for d in doubled}))}",
-                    site=site,
-                    direction="egress",
-                    evidence={"exporters": sorted({d.exporter for d in doubled}), "sampling_direction": "both"},
-                )
-                for ex in site.exits
-                if ex.role == "secours"
-            ]
             continue
         totals = {}
         for ex in site.exits:
@@ -1083,9 +1026,6 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
     for site, ex in _exits(p, only_site):
         rec = recommended_sampling(ex.capacity_bps, sp)
         for d in _DIRS:
-            if (skip := _double_counted(p, "sampling_adequacy", site, ex, d)) is not None:
-                out.append(skip)
-                continue
             rows = c.bytes_by(w, ["in_if", "sampling"], exit_filter(ex.exporter, ex.ifindex, d))
             samples = sum(r["samples"] for r in rows)
             subject = f"{site.name}/{ex.name}"
@@ -1279,8 +1219,8 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
         if e is None:
             add(name, "exporteur absent de la calibration")
             continue
-        if e.sampling_direction == "both" and not double_sampling_filtered(name):
-            add(name, f"{_DOUBLE_COUNTED} ; ajouter le champ au mapping ou échantillonner dans un seul sens")
+        if e.sampling_direction == "both":
+            add(name, "échantillonnage entrée+sortie : double comptage possible, non traité")
         if e.counter_interval_s > 60:
             add(name, f"intervalle de compteurs {e.counter_interval_s} s (30 s recommandé)")
         for msg in _exporter_scope(e, cal, today, th["calibration_max_age_days"]):

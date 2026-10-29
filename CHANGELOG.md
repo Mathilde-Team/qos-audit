@@ -8,10 +8,6 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
-- Double comptage des exporteurs `sampling_direction: both` traité (#26, option A avec repli sur C) : clé logique
-  optionnelle `sampler_if` (`sflow.source_id`, interface de l'échantillonneur sFlow). Si elle est dans le mapping,
-  `exit_filter` ne retient que les échantillons prélevés sur l'interface WAN de la sortie. Sinon, `saturation`,
-  `counter_consistency`, `sampling_adequacy` et `exit_balance` passent en non concluant ; le marquage reste évalué.
 - Marge sur les octets calibrée (#33) : `elastiflow.bytes_error_cv` (CV des tailles de paquets mesuré sur les séries B et
   C) remplace l'hypothèse `bytes_error_margin` par √(1 + CV²) (Elastiflow-Validation §3.1) dans l'incertitude de chaque
   constat ; nouveau constat informatif `bytes_error_margin` (marge mesurée ou supposée). CV négatif, non numérique ou

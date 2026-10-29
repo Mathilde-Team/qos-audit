@@ -15,13 +15,7 @@ from qos_audit.advisor.catalog import load_catalog
 from qos_audit.advisor.discover import discover_unclassified
 from qos_audit.advisor.recommend import recommend
 from qos_audit.advisor.render_comware import render_marking_policy
-from qos_audit.calibration import (
-    Calibration,
-    apply_calibration,
-    apply_double_sampling,
-    default_calibration,
-    load_calibration,
-)
+from qos_audit.calibration import Calibration, apply_calibration, default_calibration, load_calibration
 from qos_audit.checks import run_all
 from qos_audit.comware.extract import (
     build_policy,
@@ -79,9 +73,6 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         counters_index=cal.counters_index,
     )
     client.check_fields()
-    # le mapping n'est consulté pour sampler_if que si un exporteur échantillonne dans les deux sens (#26)
-    both = any(e.sampling_direction == "both" for e in cal.exporters.values())
-    apply_double_sampling(cal, both and client.has_field("sampler_if"))
     window = _window(a.minutes, lag)
     logger.debug("_setup: sortie | calibration chargée")
     return client, cal, window

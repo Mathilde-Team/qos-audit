@@ -9,10 +9,9 @@ Modèle : `calibrations/calibration.example.yaml`. Code : `src/qos_audit/calibra
 | Test | Question | Clé de calibration | Effet dans l'outil |
 |---|---|---|---|
 | P1 | NTP aligné ? | (prérequis) | Fenêtres d'analyse cohérentes |
-| P2 | Sampling par interface, sens d'échantillonnage | `exporters.<nom>.interfaces`, `sampling_direction` | `sampling_drift` ; avec `both`, doublon écarté par `sampler_if`, sinon contrôles de volume non concluants (#26) |
+| P2 | Sampling par interface, sens d'échantillonnage | `exporters.<nom>.interfaces`, `sampling_direction` | `sampling_drift` ; avertissement si `both` |
 | P3 | Exportateur, interface d'entrée et sampling corrects ? | (contrôle manuel) | |
 | P4 | Noms de champs réels | `elastiflow.fields` | Surcharge `elastiflow.FIELDS` au démarrage |
-| P4 | Champ de l'interface de l'échantillonneur (exporteurs `both`) | `elastiflow.fields.sampler_if` (défaut `sflow.source_id`) | Optionnel : absent du mapping, il n'arrête pas l'audit ; seul `both` en dépend (#26) |
 | P5 | Base de comptage (IP ou trame) | `elastiflow.bytes_overhead_per_packet` | Octets IP = octets − 14 × paquets (si 14) |
 | P6 | Le facteur d'échantillonnage est-il déjà appliqué ? | `elastiflow.sampling_already_applied` | `true` : pas de multiplication ; `false` : l'outil multiplie par le sampling |
 | P7 | Délai d'agrégation | `elastiflow.ingest_lag_minutes` | La fenêtre d'audit se termine à « maintenant − délai » (`--ingest-lag-minutes` surcharge) |
