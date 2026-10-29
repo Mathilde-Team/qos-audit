@@ -8,6 +8,10 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
+- Double comptage des exporteurs `sampling_direction: both` traité (#26, option A avec repli sur C) : clé logique
+  optionnelle `sampler_if` (`sflow.source_id`, interface de l'échantillonneur sFlow). Si elle est dans le mapping,
+  `exit_filter` ne retient que les échantillons prélevés sur l'interface WAN de la sortie. Sinon, `saturation`,
+  `counter_consistency`, `sampling_adequacy` et `exit_balance` passent en non concluant ; le marquage reste évalué.
 - Sondes actives par classe (#29) : `qos-audit sondes` (et `audit --sondes`) lit `sondes.csv` de la série S
   d'Elastiflow-Validation (§8.8) et produit un constat `probe_priority` par sortie. Sur une même passe, une classe
   dégradée alors qu'une classe moins prioritaire ne l'est pas = priorisation inversée (CRIT pour les deux classes les

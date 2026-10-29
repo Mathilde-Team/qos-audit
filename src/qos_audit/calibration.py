@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
-from qos_audit.elastiflow import configure_counter_fields, configure_fields
+from qos_audit.elastiflow import configure_counter_fields, configure_double_sampling, configure_fields
 
 __all__ = [
     "Calibration",
@@ -17,6 +17,7 @@ __all__ = [
     "InterfaceCfg",
     "Validation",
     "apply_calibration",
+    "apply_double_sampling",
     "default_calibration",
     "load_calibration",
 ]
@@ -89,6 +90,33 @@ class Calibration:
         rate = next((i.sampling_rate for i in ex.interfaces if i.ifindex == ifindex), None)
         logger.debug("configured_rate: sortie | 1:{}", rate)
         return rate
+
+
+def apply_double_sampling(cal: Calibration, sampler_available: bool) -> dict[str, str]:
+    """Configure le traitement du double comptage pour les exporteurs ``sampling_direction: both`` (#26).
+
+    Args:
+        cal: Calibration.
+        sampler_available: Le champ ``sampler_if`` (interface de l'échantillonneur) existe dans le mapping.
+
+    Returns:
+        ``{exporteur: "filtered" | "unresolved"}`` (vide si aucun exporteur n'échantillonne dans les deux sens).
+    """
+    logger.debug("apply_double_sampling: entrée | champ={}", sampler_available)
+    both = {name for name, e in cal.exporters.items() if e.sampling_direction == "both"}
+    modes = configure_double_sampling(both, sampler_available)
+    for name, mode in sorted(modes.items()):
+        if mode == "filtered":
+            logger.info(
+                "{} : échantillonnage entrée+sortie, seuls les échantillons de l'interface WAN sont retenus", name
+            )
+        else:
+            logger.warning(
+                "{} : échantillonnage entrée+sortie sans champ d'échantillonneur, contrôles de volume non concluants",
+                name,
+            )
+    logger.debug("apply_double_sampling: sortie | {}", modes)
+    return modes
 
 
 def default_calibration() -> Calibration:

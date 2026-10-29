@@ -70,7 +70,7 @@ plusieurs ports, ils doivent tous avoir un taux compatible avec la capacité de 
 | Mode | Conséquence | Prise en compte |
 |---|---|---|
 | Entrée seule (`inbound`) | Chaque paquet est vu une fois par équipement | Cas nominal |
-| Entrée et sortie (`both`) | Un même paquet peut être vu deux fois, à l'entrée et à la sortie | **Non traité** : l'outil le signale (`calibration`) |
+| Entrée et sortie (`both`) | Un même paquet peut être vu deux fois, à l'entrée et à la sortie | Avec le champ `sampler_if` (interface de l'échantillonneur) dans le mapping : seuls les échantillons prélevés sur l'interface WAN sont retenus. Sans lui : contrôles de volume non concluants et WARN `calibration` (#26, voir CONTROLES.md) |
 
 ## 6. Export sFlow
 

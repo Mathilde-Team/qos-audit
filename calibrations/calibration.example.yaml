@@ -20,7 +20,7 @@ exporters:                     # P2 : `display sflow` sur chaque équipement ; �
   rtr-a-01:
     model: "à renseigner"
     comware_version: "à renseigner"
-    sampling_direction: inbound    # inbound (entrée seule) | both (entrée et sortie : double comptage possible)
+    sampling_direction: inbound    # inbound (entrée seule) | both (entrée et sortie : doublon écarté par sampler_if, #26)
     counter_interval_s: 30         # 30 recommandé ; 300 = valeur par défaut
     interfaces:
       - {ifindex: 49, name: "WAN1", sampling_rate: 128}

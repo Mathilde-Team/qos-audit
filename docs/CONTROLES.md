@@ -23,7 +23,7 @@ Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur re
 | `sampling_adequacy` | Le sampling reçu est-il adapté à la capacité de la sortie (erreur au plancher) ? | WARN > 5 %, CRIT > 15 % | Bonne |
 | `sampling_cost` | Le sampling est-il trop fin (CPU, export) ? | WARN | Estimation au pire cas |
 | `sampling_drift` | Le sampling configuré (calibration) est-il celui reçu ? | WARN | Bonne |
-| `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage possible ? Chaque exporteur couvert par un périmètre validé, sans mise à jour depuis ? | WARN | Déclaratif |
+| `calibration` | Validation d'ElastiFlow faite, complète, récente ? Facteur d'échantillonnage validé ? Double comptage non traité (`both` sans champ `sampler_if`, #26) ? Chaque exporteur couvert par un périmètre validé, sans mise à jour depuis ? | WARN | Déclaratif |
 
 ## Lecture du débordement de classe
 
@@ -32,8 +32,19 @@ Chaque constat porte : site, sortie, sens, nombre d'échantillons et **erreur re
 - Le « lien chargé » se juge sur les compteurs (mesure exacte) dès qu'ils couvrent la fenêtre ; la répartition par classe,
   elle, reste statistique (flux échantillonnés).
 
+## Double comptage (`sampling_direction: both`, #26)
+
+Un paquet LAN → WAN d'un exporteur échantillonné dans les deux sens peut être prélevé à l'entrée du port LAN **et**
+à la sortie du port WAN : deux enregistrements aux mêmes `in_if` / `out_if`.
+
+- **Champ `sampler_if` présent dans le mapping** (`sflow.source_id` par défaut, interface de l'échantillonneur sFlow) :
+  pour une sortie, seuls les échantillons prélevés sur son interface WAN sont retenus, dans les deux sens. Chaque
+  paquet compte une fois ; tous les contrôles restent évalués.
+- **Champ absent** : `saturation`, `counter_consistency`, `sampling_adequacy` (pour chaque sens de la sortie) et
+  `exit_balance` (pour tout le site) passent en INCONCLUSIVE, avec la raison. Le marquage (`marking`, `class_share`,
+  `dscp_plan`…, des proportions) reste évalué ; `calibration` lève un WARN.
+
 ## À implémenter
 
 - Remarquage sur le chemin : comparaison de la classe vue à l'entrée et à la sortie d'un équipement.
 - Marquage conforme sur le sens entrant (ACL inversées).
-- Double comptage avec un échantillonnage en entrée et en sortie.
