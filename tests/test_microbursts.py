@@ -76,8 +76,16 @@ def _f(check: str, sev: Severity, direction: str = "egress", subject: str = "sit
 def test_microburst_drops_sans_saturation() -> None:
     (mb,) = check_microbursts([_f("saturation", Severity.OK), _f("congestion_drops", Severity.CRIT)], W10)
     assert (mb.check, mb.severity, mb.subject, mb.direction) == ("microburst", Severity.WARN, "site-a/wan1", "egress")
-    assert mb.evidence == {"drops": {"EF": 12}, "p95_pct": 31.0, "bucket": "10s"}
+    assert mb.evidence == {"congestion": {"EF": 12}, "p95_pct": 31.0, "bucket": "10s"}
     assert "12 paquets droppés" in mb.message and "p95 31%" in mb.message and "--bucket" in mb.message
+
+
+def test_microburst_ecn_ce_sur_sortie_calm() -> None:
+    """Marques ECN CE (source actuelle de la congestion) sur une sortie que la saturation juge saine."""
+    (mb,) = check_microbursts([_f("saturation", Severity.OK), _f("congestion_ecn", Severity.WARN)], W10)
+    assert (mb.check, mb.severity) == ("microburst", Severity.WARN)
+    assert mb.evidence == {"congestion": {"p95_pct": 31.0}, "p95_pct": 31.0, "bucket": "10s"}
+    assert "p95 31%" in mb.message and "--bucket" in mb.message
 
 
 @pytest.mark.parametrize(
@@ -110,7 +118,11 @@ def test_cli_audit_bucket(monkeypatch, tmp_path) -> None:
         vues.append(w)
         return []
 
-    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: object())
+    class _FakeClient:
+        def check_fields(self) -> None:  # ajouté par dev dans _setup
+            """Ne vérifie rien."""
+
+    monkeypatch.setattr(cli, "ElastiflowClient", lambda *a, **k: _FakeClient())
     monkeypatch.setattr(cli, "run_all", run_all)
     argv = ["qos-audit", "audit", "--policy", str(POLICY), "--bucket", "15s", "--out", str(tmp_path / "r.json")]
     monkeypatch.setattr(sys, "argv", argv)

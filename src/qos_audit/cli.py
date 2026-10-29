@@ -1,9 +1,11 @@
-"""Point d'entrée : ``audit``, ``advise``, ``compare``, ``sampling``, ``extract`` (QoS depuis les configurations)."""
+"""Point d'entrée : ``audit``, ``advise``, ``compare``, ``sampling``, ``extract``, ``sflow``,
+``ifindex-map`` (table exporter/ifIndex/nom par SNMP)."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import asdict
@@ -29,7 +31,9 @@ from qos_audit.comware.extract import (
     render_site_report,
     site_policy_filename,
 )
-from qos_audit.elastiflow import ElastiflowClient, Window
+from qos_audit.comware.snmp import COMMUNITY_ENV, build_ifindex_rows, parse_exporters, write_ifindex_csv
+from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
+from qos_audit.models import Finding, Severity
 from qos_audit.policy import DEFAULT_THRESHOLDS, load_policies, load_policy
 from qos_audit.sampling import (
     SamplingParams,
@@ -38,6 +42,7 @@ from qos_audit.sampling import (
     recommended_sampling,
     worst_case_samples_per_s,
 )
+from qos_audit.sflow import load_configs, render_calibration_yaml, sflow_findings, to_calibration_section
 from qos_audit.verify import compare_reports
 
 __all__ = ["main"]
@@ -47,8 +52,11 @@ _EXIT_CODE = {0: 0, 1: 0, 2: 1, 3: 2}  # OK/INCONCLUSIVE -> 0, WARN -> 1, CRIT -
 
 def _window(minutes: int, lag_minutes: int, bucket: str = "1m") -> Window:
     """Fenêtre d'analyse décalée du délai d'ingestion d'ElastiFlow (phase 0, P7)."""
+    logger.debug("_window: entrée | {} min, lag {} min", minutes, lag_minutes)
     end = datetime.now(UTC) - timedelta(minutes=lag_minutes)
-    return Window(start=end - timedelta(minutes=minutes), end=end, bucket=bucket)
+    win = Window(start=end - timedelta(minutes=minutes), end=end, bucket=bucket)
+    logger.debug("_window: sortie | [{}..{}] bucket {}", win.start, win.end, win.bucket)
+    return win
 
 
 def _bucket_arg(value: str) -> str:
@@ -66,15 +74,17 @@ def _bucket_arg(value: str) -> str:
 
 
 def _calibration(a: argparse.Namespace) -> Calibration:
+    logger.debug("_calibration: entrée | fichier={}", a.calibration)
     cal = load_calibration(a.calibration) if a.calibration else default_calibration()
     apply_calibration(cal)
     if cal.sampling_already_applied is None:
         logger.warning("Facteur d'échantillonnage non validé (P6) : l'audit suppose qu'il n'est PAS déjà appliqué")
+    logger.debug("_calibration: sortie | lag={} min", cal.ingest_lag_minutes)
     return cal
 
 
 def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window]:
-    logger.debug("_setup: entrée | {} min, bucket {}", a.minutes, getattr(a, "bucket", "1m"))
+    logger.debug("_setup: entrée | opensearch={} bucket {}", len(a.opensearch), getattr(a, "bucket", "1m"))
     cal = _calibration(a)
     lag = a.ingest_lag_minutes if a.ingest_lag_minutes is not None else cal.ingest_lag_minutes
     client = ElastiflowClient(
@@ -83,19 +93,26 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         bytes_overhead_per_packet=cal.bytes_overhead_per_packet,
         counters_index=cal.counters_index,
     )
+    client.check_fields()
     window = _window(a.minutes, lag, getattr(a, "bucket", "1m"))
-    logger.debug("_setup: retour | fenêtre [{}, {}] bucket {}", window.start, window.end, window.bucket)
+    logger.debug("_setup: sortie | calibration chargée, bucket {}", window.bucket)
     return client, cal, window
 
 
 def _audit(a: argparse.Namespace) -> int:
     """Audit : une politique, ou celle de chaque site (dossier de ``extract --per-site``)."""
     logger.debug("_audit: entrée | {} site={}", a.policy, a.site)
-    client, cal, window = _setup(a)
+    try:
+        client, cal, window = _setup(a)
+    except SchemaError as exc:
+        logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        logger.debug("_audit: sortie | 2")
+        return 2
     rows: list[dict] = []
     worst = 0
     for policy in load_policies(a.policy, a.site):
-        for f in run_all(client, policy, window, only_site=a.site, cal=cal):
+        findings = run_all(client, policy, window, only_site=a.site, cal=cal)
+        for f in findings:
             row = asdict(f) | {"severity": f.severity.name}
             if row not in rows:  # constats globaux (calibration) répétés d'un site à l'autre
                 rows.append(row)
@@ -107,32 +124,43 @@ def _audit(a: argparse.Namespace) -> int:
 
 
 def _advise(a: argparse.Namespace) -> int:
+    logger.debug("_advise: entrée | {} site={}", a.policy, a.site)
     policies = load_policies(a.policy, a.site)
     if len(policies) > 1:
         logger.error("advise sur un dossier de politiques par site : préciser --site")
         logger.debug("_advise: sortie | 2")
         return 2
     policy = policies[0]
-    client, _cal, window = _setup(a)
+    try:
+        client, _cal, window = _setup(a)
+    except SchemaError as exc:
+        logger.error("Schéma ElastiFlow non conforme : {}", exc)
+        logger.debug("_advise: sortie | 2")
+        return 2
     clusters = discover_unclassified(client, policy, window, only_site=a.site)
     recos = recommend(clusters, load_catalog(a.catalog), policy)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "recommandations.json").write_text(json.dumps([asdict(r) for r in recos], indent=2), encoding="utf-8")
     (a.out / "brouillon_comware.cfg").write_text(render_marking_policy(recos), encoding="utf-8")
     logger.info("{} recommandations écrites dans {}", len(recos), a.out)
+    logger.debug("_advise: sortie | 0")
     return 0
 
 
 def _compare(a: argparse.Namespace) -> int:
+    logger.debug("_compare: entrée | avant={} après={}", a.before, a.after)
     rows = compare_reports(json.loads(a.before.read_text("utf-8")), json.loads(a.after.read_text("utf-8")))
     a.out.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
     worse = sum(1 for r in rows if r["verdict"] == "dégradé")
     logger.info("{} constats comparés, {} dégradés", len(rows), worse)
-    return 1 if worse else 0
+    code = 1 if worse else 0
+    logger.debug("_compare: sortie | {}", code)
+    return code
 
 
 def _extract(a: argparse.Namespace) -> int:
     """Extrait la politique QoS théorique des configurations Comware (ACL, classifiers, behaviors, policies)."""
+    logger.debug("_extract: entrée | {} fichier(s) de configuration", len(a.cfg))
     devices = load_devices(a.cfg, a.exporter)
     base = load_policy(a.base_policy) if a.base_policy else None
     ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
@@ -160,12 +188,14 @@ def _extract(a: argparse.Namespace) -> int:
     )
     levels = {i.level for i in ext.issues}
     logger.info("{} règle(s) de marquage, {} constat(s) dans {}", len(ext.rules), len(ext.issues), a.out)
-    return 2 if "ERROR" in levels else 1 if "WARN" in levels else 0
+    code = 2 if "ERROR" in levels else 1 if "WARN" in levels else 0
+    logger.debug("_extract: sortie | {}", code)
+    return code
 
 
 def _sampling(a: argparse.Namespace) -> int:
     """Affiche le sampling recommandé (par débit, ou par sortie d'une politique) et l'erreur attendue."""
-    logger.debug("_sampling: entrée | liens={} politique={}", a.link_mbps, a.policy)
+    logger.debug("_sampling: entrée | liens={} politique={}", len(a.link_mbps), a.policy)
     sp = SamplingParams(
         floor_ratio=a.floor_ratio, window_s=a.window_s, size_bytes=a.size, error_target_pct=a.error_target
     )
@@ -190,8 +220,57 @@ def _sampling(a: argparse.Namespace) -> int:
         floor = min_bucket_seconds(bps, rate, min_samples, load_ratio, sp.size_bytes)
         lines.append(f"{label:<28}{bps / 1e6:>9g}{'1:' + str(rec):>12}{cfg:>11}{err:>10.1f}{cost:>17.0f}{floor:>14.0f}")
     sys.stdout.write("\n".join(lines) + "\n")
-    logger.debug("_sampling: retour | {} ligne(s)", len(lines) - 1)
+    logger.debug("_sampling: sortie | {} ligne(s)", len(lines) - 1)
     return 0
+
+
+def _ifindex_map(a: argparse.Namespace) -> int:
+    """Écrit le CSV ``exporter,ifindex,name`` de ``extract --ifindex-map`` en interrogeant les exporteurs en SNMP.
+
+    Returns:
+        0 si tous les exporteurs ont répondu, 1 si l'un d'eux manque (CSV partiel écrit), 2 sans communauté.
+    """
+    logger.debug("_ifindex_map: entrée | {} exporteur(s) vers {}", len(a.exporter), a.out)
+    community = os.environ.get(COMMUNITY_ENV, "")
+    if not community:
+        logger.error("Communauté SNMP absente : définir la variable d'environnement {}", COMMUNITY_ENV)
+        logger.debug("_ifindex_map: sortie (erreur) | code 2")
+        return 2
+    rows, errors = build_ifindex_rows(
+        parse_exporters(a.exporter), community, a.column, timeout_s=a.timeout, retries=a.retries
+    )
+    write_ifindex_csv(rows, a.out)
+    logger.info("{} interface(s) de {} exporteur(s) dans {}", len(rows), len(a.exporter) - len(errors), a.out)
+    for e in errors:
+        logger.warning("Exporteur incomplet : {}", e)
+    code = 1 if errors else 0
+    logger.debug("_ifindex_map: sortie | code {}", code)
+    return code
+
+
+def _sflow(a: argparse.Namespace) -> int:
+    """Extrait le contexte sFlow des configurations vers calibration.yaml et liste les constats (#19)."""
+    logger.debug("_sflow: entrée | configs={}", a.cfg)
+    devices = load_configs(a.cfg, a.exporter)
+    ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
+    section = to_calibration_section(devices, ifmap)
+    yaml_text = render_calibration_yaml(section)
+    if a.out:
+        a.out.write_text(yaml_text, encoding="utf-8")
+    else:
+        sys.stdout.write(yaml_text)  # le YAML seul sur stdout, les constats sur stderr
+    findings: list[Finding] = []
+    if a.policy:
+        ifmap = load_ifindex_map(a.ifindex_map) if a.ifindex_map else None
+        findings = sflow_findings(devices, load_policy(a.policy), ifmap)
+        dump = [
+            {"check": f.check, "severity": f.severity.name, "subject": f.subject, "message": f.message}
+            for f in findings
+        ]
+        sys.stderr.write(json.dumps(dump, indent=2, ensure_ascii=False) + "\n")
+    levels = {f.severity for f in findings}
+    logger.debug("_sflow: retour | {} équipement(s), {} constat(s)", len(devices), len(findings))
+    return 2 if Severity.CRIT in levels else 1 if Severity.WARN in levels else 0
 
 
 def main() -> int:
@@ -200,6 +279,7 @@ def main() -> int:
     Returns:
         Code retour : 0 OK, 1 WARN, 2 CRIT (audit) ; 1 si dégradation (compare).
     """
+    logger.debug("main: entrée")
     ap = argparse.ArgumentParser(prog="qos-audit")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("audit", _audit), ("advise", _advise)):
@@ -242,8 +322,25 @@ def main() -> int:
     sm.add_argument("--floor-ratio", type=float, default=0.05, help="plancher en fraction du débit du lien")
     sm.add_argument("--error-target", type=float, default=5.0, help="erreur cible à 95 %% (en %%)")
     sm.set_defaults(fn=_sampling)
+    im = sub.add_parser("ifindex-map", help=f"table exporter,ifindex,name par SNMP v2c (communauté : {COMMUNITY_ENV})")
+    im.add_argument("--exporter", nargs="+", required=True, help="nom ElastiFlow=hôte SNMP (ex. rtr-a-01=192.0.2.1)")
+    im.add_argument("--column", choices=["ifDescr", "ifName"], default="ifDescr", help="nom d'interface lu")
+    im.add_argument("--timeout", type=int, default=5, help="délai SNMP par requête (s)")
+    im.add_argument("--retries", type=int, default=1, help="nouvelles tentatives SNMP")
+    im.add_argument("--out", type=Path, default=Path("ifindex.csv"))
+    im.set_defaults(fn=_ifindex_map)
+    sf = sub.add_parser("sflow", help="contexte sFlow par interface vers calibration.yaml (#19)")
+    sf.add_argument("--cfg", type=Path, nargs="+", required=True, help="fichiers ou dossiers de configuration")
+    sf.add_argument("--exporter", help="nom d'exporteur ElastiFlow (un seul fichier ; défaut : sysname)")
+    sf.add_argument("--policy", type=Path, help="produit les constats pour les sorties de cette politique")
+    sf.add_argument("--ifindex-map", type=Path, help="CSV exporter,ifindex,name")
+    sf.add_argument("--out", type=Path, help="fichier YAML de sortie (défaut : sortie standard)")
+    sf.set_defaults(fn=_sflow)
     a = ap.parse_args()
-    return a.fn(a)
+    logger.debug("main: entrée | sous-commande={}", a.cmd)
+    code = a.fn(a)
+    logger.debug("main: sortie | {}", code)
+    return code
 
 
 if __name__ == "__main__":

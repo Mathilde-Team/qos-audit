@@ -44,7 +44,9 @@ class SamplingParams:
     @property
     def n_target(self) -> int:
         """Nombre d'échantillons nécessaires pour atteindre l'erreur cible."""
-        return samples_needed(self.error_target_pct, self.margin)
+        n = samples_needed(self.error_target_pct, self.margin)
+        logger.debug("n_target: sortie | {}", n)
+        return n
 
 
 def samples_needed(error_pct: float, margin: float = 1.0) -> int:
@@ -57,11 +59,17 @@ def samples_needed(error_pct: float, margin: float = 1.0) -> int:
     Returns:
         Nombre d'échantillons (1 537 pour 5 %).
     """
-    return math.ceil((_Z95 * margin / error_pct) ** 2)
+    logger.debug("samples_needed: entrée | cible={} % marge={}", error_pct, margin)
+    n = math.ceil((_Z95 * margin / error_pct) ** 2)
+    logger.debug("samples_needed: sortie | {}", n)
+    return n
 
 
 def _packets_at_floor(link_bps: float, p: SamplingParams) -> float:
-    return link_bps * p.floor_ratio * p.window_s / (8 * p.size_bytes)
+    logger.debug("_packets_at_floor: entrée | lien={} Mbit/s", link_bps / 1e6)
+    pkts = link_bps * p.floor_ratio * p.window_s / (8 * p.size_bytes)
+    logger.debug("_packets_at_floor: sortie | {:.0f} paquet(s)", pkts)
+    return pkts
 
 
 def recommended_sampling(link_bps: float, p: SamplingParams | None = None) -> int:
@@ -74,6 +82,7 @@ def recommended_sampling(link_bps: float, p: SamplingParams | None = None) -> in
     Returns:
         N de ``1:N`` (au minimum 1).
     """
+    logger.debug("recommended_sampling: entrée | lien={} Mbit/s", link_bps / 1e6)
     p = p or SamplingParams()
     n_max = max(1.0, _packets_at_floor(link_bps, p) / p.n_target)
     rate = 2 ** math.floor(math.log2(n_max))
@@ -92,6 +101,7 @@ def expected_error_pct(link_bps: float, rate: int, p: SamplingParams | None = No
     Returns:
         Erreur en pourcentage ; 0 à 1:1 (comptage exhaustif).
     """
+    logger.debug("expected_error_pct: entrée | lien={} 1:{}", link_bps, rate)
     p = p or SamplingParams()
     if rate <= 1:
         logger.debug("expected_error_pct: retour | 1:1 -> 0 %")
@@ -113,7 +123,10 @@ def worst_case_samples_per_s(link_bps: float, rate: int, size_bytes: int = 100) 
     Returns:
         Échantillons par seconde pour une interface.
     """
-    return link_bps / (8 * size_bytes) / max(1, rate)
+    logger.debug("worst_case_samples_per_s: entrée | lien={} 1:{}", link_bps, rate)
+    n = link_bps / (8 * size_bytes) / max(1, rate)
+    logger.debug("worst_case_samples_per_s: sortie | {:.0f} éch./s", n)
+    return n
 
 
 def min_bucket_seconds(
@@ -143,7 +156,9 @@ def min_bucket_seconds(
 
 def detection_probability(expected_samples: float) -> float:
     """Probabilité de voir au moins un échantillon d'un flux (``1 - exp(-n)``)."""
-    return 1.0 - math.exp(-expected_samples)
+    p = 1.0 - math.exp(-expected_samples)
+    logger.debug("detection_probability: sortie | {:.3f}", p)
+    return p
 
 
 def params_from_thresholds(th: dict) -> SamplingParams:
@@ -155,10 +170,13 @@ def params_from_thresholds(th: dict) -> SamplingParams:
     Returns:
         Hypothèses de dimensionnement.
     """
-    return SamplingParams(
+    logger.debug("params_from_thresholds: entrée | seuils={}", sorted(th))
+    params = SamplingParams(
         floor_ratio=th["sampling_floor_ratio"],
         window_s=int(th["sampling_window_s"]),
         size_bytes=int(th["sampling_size_bytes"]),
         error_target_pct=th["sampling_error_target_pct"],
         margin=th.get("sampling_margin", 1.0),
     )
+    logger.debug("params_from_thresholds: sortie | cible={} %", params.error_target_pct)
+    return params

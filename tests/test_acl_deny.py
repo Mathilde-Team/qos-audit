@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from qos_audit.checks import match_filter
 from qos_audit.comware.convert import acl_to_matches
 from qos_audit.comware.model import Acl, DeviceQos
 from qos_audit.comware.parser import parse_rule
-from qos_audit.checks import match_filter
 from qos_audit.models import FlowMatch
 from qos_audit.policy import load_policy
 

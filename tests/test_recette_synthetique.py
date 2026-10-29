@@ -7,10 +7,10 @@ non-régression tant que les rapports réels du lab (#36) ne sont pas archivés.
 
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -30,13 +30,12 @@ from qos_audit.checks import (
 )
 from qos_audit.comware.extract import marking_rules
 from qos_audit.comware.parser import parse_device
-from qos_audit.counters import NullCounters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window
 from qos_audit.models import Severity
 from qos_audit.policy import load_policy
 
 ROOT = Path(__file__).parent.parent
-T0 = datetime(2026, 10, 26, 8, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 26, 8, tzinfo=UTC)
 W = Window(T0, T0 + timedelta(minutes=60))
 
 
@@ -71,6 +70,9 @@ class Lab:
     def __init__(self, donnees: dict[tuple, list[dict]] | None = None) -> None:
         self.donnees = donnees or {}
         self.appels: list[tuple] = []
+
+    def check_fields(self) -> None:
+        """Schéma toujours conforme (issue #16)."""
 
     def bytes_by(self, w, group_by, extra_filter=None):
         cle = (tuple(group_by), *_cle(extra_filter))
@@ -148,24 +150,13 @@ def test_r6_sampling_trop_grossier(pol):
     assert muet.severity is Severity.INCONCLUSIVE and "aucun enregistrement" in muet.message
 
 
-def test_congestion_ecn_et_drops(pol):
+def test_congestion_ecn(pol):
     lignes = [{"ecn": 3, "bytes": 1e6, "samples": 50}, {"ecn": 0, "bytes": 99e6, "samples": 950}]
     lab = Lab({(("ecn",), "rtr-a-01", 49, "egress"): lignes})
-
-    class Compteurs:
-        def queue_drops(self, exporter, ifindex, w):
-            if exporter == "rtr-a-02":
-                raise NotImplementedError
-            return {"EF": 12, "BE": 0}
-
-    res = {(f.check, f.subject): f for f in check_congestion(lab, pol, W, Compteurs())}
+    res = {(f.check, f.subject): f for f in check_congestion(lab, pol, W)}
     assert res[("congestion_ecn", "site-a/wan1")].severity is Severity.WARN
     assert res[("congestion_ecn", "site-a/wan2")].severity is Severity.OK
-    drops = res[("congestion_drops", "site-a/wan1")]
-    assert drops.severity is Severity.CRIT and drops.message == "12 paquets droppés"
-    assert ("congestion_drops", "site-a/wan2") not in res
-    # aucune source branchée : constat ECN seul
-    assert {f.check for f in check_congestion(lab, pol, W, NullCounters())} == {"congestion_ecn"}
+    assert {f.check for f in res.values()} == {"congestion_ecn"}
 
 
 def test_sampling_drift(pol, cal):
@@ -214,7 +205,12 @@ def _client(*reponses: dict, **options) -> tuple[ElastiflowClient, Reponses]:
 
 
 def _page(cles: list[int], apres: dict | None) -> dict:
-    g = {"buckets": [{"key": {"dscp": k}, "doc_count": 10, "b": {"value": 100.0 * k}} for k in cles]}
+    g = {
+        "buckets": [
+            {"key": {"dscp": k}, "doc_count": 10, "b": {"value": 100.0 * k}, "q": {"value": 1000.0 * k * k}}
+            for k in cles
+        ]
+    }
     return {"g": g | ({"after_key": apres} if apres else {})}
 
 
@@ -222,9 +218,9 @@ def test_client_bytes_by_pagine_et_extrapole():
     c, faux = _client(_page([0, 46], {"dscp": 46}), _page([48], None))
     rows = c.bytes_by(W, ["dscp"], {"term": {"x": 1}}, size=2)
     assert rows == [
-        {"dscp": 0, "bytes": 0.0, "samples": 10},
-        {"dscp": 46, "bytes": 4600.0, "samples": 10},
-        {"dscp": 48, "bytes": 4800.0, "samples": 10},
+        {"dscp": 0, "bytes": 0.0, "bytes_sq": 0.0, "samples": 10},
+        {"dscp": 46, "bytes": 4600.0, "bytes_sq": 1000.0 * 46 * 46, "samples": 10},
+        {"dscp": 48, "bytes": 4800.0, "bytes_sq": 1000.0 * 48 * 48, "samples": 10},
     ]
     (idx, premier), (_, second) = faux.corps
     assert idx == "elastiflow-flow-*" and "after" not in premier["aggs"]["g"]["composite"]

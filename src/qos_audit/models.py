@@ -18,6 +18,7 @@ __all__ = [
     "QosClass",
     "Severity",
     "Site",
+    "combined_error_pct",
     "rel_error_pct",
     "wide_port_range",
 ]
@@ -37,9 +38,35 @@ def rel_error_pct(samples: int, margin: float = 1.0) -> float:
     Returns:
         Erreur relative en pourcentage (``inf`` si aucun échantillon).
     """
+    logger.debug("rel_error_pct: entrée | n={} marge={}", samples, margin)
     err = 196.0 * margin / math.sqrt(samples) if samples > 0 else float("inf")
     logger.debug("rel_error_pct: retour | n={} -> {:.1f} %", samples, err)
     return err
+
+
+def combined_error_pct(total_bytes: float, sum_sq: float) -> tuple[float, float]:
+    """Erreur relative à 95 % d'une somme d'octets extrapolés enregistrement par enregistrement (#27).
+
+    Chaque enregistrement ``i`` pèse ``x_i = N_i × b_i`` (son propre taux × ses octets). Sous échantillonnage
+    aléatoire, Var(Σ x_i) ≈ Σ x_i², d'où une erreur de 1,96 × √(Σ x_i²) / Σ x_i. Les taux mélangés (ports LAN
+    échantillonnés différemment) et la dispersion des tailles de paquets y sont mesurés, pas supposés : aucune marge
+    n'est appliquée. Avec un taux et une taille uniques, on retrouve 196 / √n.
+
+    Args:
+        total_bytes: Σ x_i.
+        sum_sq: Σ x_i².
+
+    Returns:
+        ``(erreur en %, nombre d'échantillons effectif (Σ x_i)² / Σ x_i²)`` ; ``(inf, 0)`` sans octets.
+    """
+    logger.debug("combined_error_pct: entrée | octets={} somme_des_carrés={}", total_bytes, sum_sq)
+    if total_bytes <= 0 or sum_sq <= 0:
+        logger.debug("combined_error_pct: retour | aucun octet")
+        return float("inf"), 0.0
+    err = 196.0 * math.sqrt(sum_sq) / total_bytes
+    n_eff = total_bytes**2 / sum_sq
+    logger.debug("combined_error_pct: retour | n_eff={:.1f} -> {:.1f} %", n_eff, err)
+    return err, n_eff
 
 
 def wide_port_range(m: FlowMatch, max_ports: int = WIDE_PORT_RANGE) -> tuple[int, int] | None:
@@ -93,7 +120,7 @@ class FlowMatch:
     dst_cidr: str | None = None
     src_ports: tuple[int, int] | None = None
     dst_ports: tuple[int, int] | None = None
-    excludes: tuple["FlowMatch", ...] = ()
+    excludes: tuple[FlowMatch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +131,7 @@ class QosClass:
     dscp: frozenset[int]
     priority: int
     max_share_pct: float | None = None
+    car_bps: int | None = None  # budget théorique ``car cir`` de la configuration (bps)
     match: tuple[FlowMatch, ...] = ()
     dscp_confirmed: bool = True
 
@@ -118,6 +146,8 @@ class Exit:
     speed_bps: int
     capacity_bps: int
     role: str = "principal"
+    # False quand capacity_bps manquait dans la politique et vaut speed_bps par repli (contrôle `capacity`, #13).
+    capacity_declared: bool = True
 
 
 @dataclass(frozen=True)
@@ -141,7 +171,9 @@ class Policy:
 
     def all_dscp(self) -> frozenset[int]:
         """Ensemble des DSCP prévus par le plan."""
-        return frozenset(d for c in self.classes for d in c.dscp)
+        values = frozenset(d for c in self.classes for d in c.dscp)
+        logger.debug("Policy.all_dscp: sortie | {} valeur(s)", len(values))
+        return values
 
 
 @dataclass

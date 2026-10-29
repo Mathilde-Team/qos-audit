@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from qos_audit.models import Policy
-
 from loguru import logger
+
+from qos_audit.models import Policy
 
 __all__ = ["ClassImpact", "what_if"]
 
@@ -23,7 +23,9 @@ class ClassImpact:
     @property
     def over_budget(self) -> bool:
         """Vrai si la classe dépasse son budget après reclassement."""
-        return self.budget_pct is not None and self.after_pct > self.budget_pct
+        res = self.budget_pct is not None and self.after_pct > self.budget_pct
+        logger.debug("over_budget: sortie | {}", res)
+        return res
 
 
 def what_if(
