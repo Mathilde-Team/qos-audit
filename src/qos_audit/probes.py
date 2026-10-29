@@ -90,7 +90,7 @@ def _parse_row(row: dict[str, str]) -> ProbeResult:
         raise ValueError(f"paquets incohérents (émis={emis}, perdus={perdus})")
     pertes = row["pertes_pct"].strip()
     latence = (row.get("latence_ms") or "").strip()
-    horodatage = datetime.fromisoformat(row["horodatage"].strip().replace("Z", "+00:00"))
+    horodatage = datetime.fromisoformat(row["horodatage"].strip())
     result = ProbeResult(
         horodatage=horodatage,
         site=row["site"].strip(),
