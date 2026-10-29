@@ -9,31 +9,15 @@ Modèle : `calibrations/calibration.example.yaml`. Code : `src/qos_audit/calibra
 | Test | Question | Clé de calibration | Effet dans l'outil |
 |---|---|---|---|
 | P1 | NTP aligné ? | (prérequis) | Fenêtres d'analyse cohérentes |
-| P2 | Sampling par interface, sens d'échantillonnage | `exporters.<nom>.interfaces`, `sampling_direction` | `sampling_drift` ; avec `both`, doublon écarté par `sampler_if`, sinon contrôles de volume non concluants (#26) |
+| P2 | Sampling par interface, sens d'échantillonnage | `exporters.<nom>.interfaces`, `sampling_direction` | `sampling_drift` ; avertissement si `both` |
 | P3 | Exportateur, interface d'entrée et sampling corrects ? | (contrôle manuel) | |
 | P4 | Noms de champs réels | `elastiflow.fields` | Surcharge `elastiflow.FIELDS` au démarrage |
-| P4 | Champ de l'interface de l'échantillonneur (exporteurs `both`) | `elastiflow.fields.sampler_if` (défaut `sflow.source_id`) | Optionnel : absent du mapping, il n'arrête pas l'audit ; seul `both` en dépend (#26) |
 | P5 | Base de comptage (IP ou trame) | `elastiflow.bytes_overhead_per_packet` | Octets IP = octets − 14 × paquets (si 14) |
 | P6 | Le facteur d'échantillonnage est-il déjà appliqué ? | `elastiflow.sampling_already_applied` | `true` : pas de multiplication ; `false` : l'outil multiplie par le sampling |
 | P7 | Délai d'agrégation | `elastiflow.ingest_lag_minutes` | La fenêtre d'audit se termine à « maintenant − délai » (`--ingest-lag-minutes` surcharge) |
-| Séries B, C | Dispersion des tailles de paquets (Elastiflow-Validation §3.1, #10) | `elastiflow.bytes_error_cv` | Marge sur l'incertitude des octets = √(1 + CV²), à la place de `bytes_error_margin` de la politique ; constat `bytes_error_margin` (#33) |
 | P8 | Export hors du lien testé | (contrôle manuel) | |
 | P9 | Contrat opérateur | `policy.yaml` (classes, budgets) | `dscp_confirmed`, `max_share_pct` |
 | Signature | Verdict de la section 10 | `validated_on`, `reference` | `calibration` signale une calibration jamais validée ou vieille de plus de `calibration_max_age_days` |
-
-## Marge sur les octets
-
-La borne 196/√n vaut pour des paquets de taille fixe (iperf). Pour des tailles dispersées, l'erreur à 95 % sur les
-octets vaut `196·√((1 + CV²)/n)`, où CV est le coefficient de variation des tailles de paquets (écart-type / moyenne ;
-Elastiflow-Validation, protocole §3.1). Le CV mesuré sur les séries B et C se reporte dans `elastiflow.bytes_error_cv` :
-l'audit en déduit la marge `√(1 + CV²)` et l'applique à l'incertitude de chaque constat.
-
-- **La mesure prime sur l'hypothèse** : un CV renseigné remplace `bytes_error_margin` de la politique, même fixé
-  explicitement ; cette valeur (1,25 par défaut, soit un CV de 0,75) ne sert que de repli tant que le CV n'est pas mesuré.
-- Le constat `bytes_error_margin` (OK, informatif) indique la marge appliquée et son origine : mesurée ou supposée.
-- Valeur absente, `null` ou « à renseigner » : non mesuré. Valeur négative, non numérique ou non finie : erreur de chargement.
-- Ordre de grandeur : un mélange 50 % de 64 o, 20 % de 576 o et 30 % de 1 500 o (en paquets) donne un CV de 1,04,
-  soit une marge de 1,44 : l'hypothèse 1,25 sous-estime alors l'erreur d'environ 13 %.
 
 ## Compteurs d'interface
 
@@ -121,7 +105,6 @@ Un nouveau modèle d'exporteur (ou une nouvelle famille Comware) demande une rev
       sampling_already_applied: true
       bytes_overhead_per_packet: 0
       ingest_lag_minutes: 5
-      bytes_error_cv: 0.92        # séries B et C : marge √(1 + 0,92²) ≈ 1,36
       version: "6.4.2"
     exporters:
       rtr-a-01:

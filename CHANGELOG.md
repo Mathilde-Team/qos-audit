@@ -7,15 +7,15 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+### Retiré
+- Recentrage sur le marquage (#78) : les Comware ne font que marquer, la priorisation est faite par les routeurs de
+  l'opérateur (hors d'accès) et le sFlow est pris sur le site distant. Sont retirés : la collecte SSH des drops par file
+  Comware (#10 : `ComwareCliCounters`, `comware/queue_stats.py`, `comware/ssh_netmiko.py`, `audit --comware-drops`,
+  extra `comware`/netmiko, constat `congestion_drops`), les sondes actives (#29 : `probes.py`, commande `sondes`,
+  `audit --sondes`, constat `probe_priority`, seuils `probe_*`), le traitement du double comptage (#26, annule la PR
+  #77) et la marge sur les octets calibrée (#33, annule la PR #74).
+
 ### Ajouté
-- Double comptage des exporteurs `sampling_direction: both` traité (#26, option A avec repli sur C) : clé logique
-  optionnelle `sampler_if` (`sflow.source_id`, interface de l'échantillonneur sFlow). Si elle est dans le mapping,
-  `exit_filter` ne retient que les échantillons prélevés sur l'interface WAN de la sortie. Sinon, `saturation`,
-  `counter_consistency`, `sampling_adequacy` et `exit_balance` passent en non concluant ; le marquage reste évalué.
-- Marge sur les octets calibrée (#33) : `elastiflow.bytes_error_cv` (CV des tailles de paquets mesuré sur les séries B et
-  C) remplace l'hypothèse `bytes_error_margin` par √(1 + CV²) (Elastiflow-Validation §3.1) dans l'incertitude de chaque
-  constat ; nouveau constat informatif `bytes_error_margin` (marge mesurée ou supposée). CV négatif, non numérique ou
-  non fini refusé au chargement.
 - Sondes actives par classe (#29) : `qos-audit sondes` (et `audit --sondes`) lit `sondes.csv` de la série S
   d'Elastiflow-Validation (§8.8) et produit un constat `probe_priority` par sortie. Sur une même passe, une classe
   dégradée alors qu'une classe moins prioritaire ne l'est pas = priorisation inversée (CRIT pour les deux classes les

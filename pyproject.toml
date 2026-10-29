@@ -9,11 +9,6 @@ description = "Qualification automatisée de la mise en oeuvre QoS (politique th
 requires-python = ">=3.11"
 dependencies = ["opensearch-py>=2.4", "pyyaml>=6", "loguru>=0.7", "jinja2>=3.1"]
 
-[project.optional-dependencies]
-# Collecte des drops par file en SSH (issue #10) : « uv sync --extra comware ».
-# Version figée (SOCLE §4).
-comware = ["netmiko==4.8.0"]
-
 [project.scripts]
 qos-audit = "qos_audit.cli:main"
 

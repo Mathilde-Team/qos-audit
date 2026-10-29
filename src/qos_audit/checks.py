@@ -8,21 +8,13 @@ adéquation du sampling, santé de la calibration.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import replace
 from datetime import date, datetime
 
 from loguru import logger
 
 from qos_audit.calibration import Calibration, ExporterCal, Validation
-from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
-from qos_audit.elastiflow import (
-    FIELDS,
-    ElastiflowClient,
-    Window,
-    double_sampling_filtered,
-    double_sampling_unresolved,
-    exit_filter,
-)
+from qos_audit.counters import InterfaceRates, rates_from_counters
+from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
 from qos_audit.models import (
     Direction,
     Exit,
@@ -43,8 +35,6 @@ from qos_audit.sampling import (
 )
 
 __all__ = [
-    "apply_bytes_margin",
-    "check_bytes_margin",
     "check_calibration",
     "check_counter_consistency",
     "check_encapsulated_traffic",
@@ -165,32 +155,6 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
     rates = rates_from_counters(samples, w, d)
     logger.debug("_exit_rates: sortie | usable={}", rates.usable)
     return rates
-
-
-_DOUBLE_COUNTED = (
-    "échantillonnage entrée+sortie sans champ d'échantillonneur (sampler_if) : un paquet peut être compté deux fois, "
-    "volume non concluant (#26)"
-)
-
-
-def _double_counted(p: Policy, check: str, site: Site, ex: Exit, d: str | None) -> Finding | None:
-    """Constat non concluant pour un contrôle de volume dont l'exporteur double-compte sans remède (#26, option C)."""
-    logger.debug("_double_counted: entrée | {} {}/{} sens={}", check, site.name, ex.name, d)
-    if not double_sampling_unresolved(ex.exporter):
-        logger.debug("_double_counted: sortie | pas de double comptage non traité")
-        return None
-    f = _finding(
-        p,
-        check,
-        Severity.INCONCLUSIVE,
-        f"{site.name}/{ex.name}",
-        _DOUBLE_COUNTED,
-        site=site,
-        direction=d,
-        evidence={"exporter": ex.exporter, "sampling_direction": "both"},
-    )
-    logger.debug("_double_counted: sortie | non concluant")
-    return f
 
 
 def _exits(p: Policy, only_site: str | None):
@@ -475,9 +439,6 @@ def check_saturation_and_overflow(
     th = p.thresholds
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
-            if (skip := _double_counted(p, "saturation", site, ex, d)) is not None:
-                out.append(skip)
-                continue
             series = c.bytes_timeseries(w, exit_filter(ex.exporter, ex.ifindex, d))
             by_ts: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
             samples_by_ts: dict[int, int] = defaultdict(int)
@@ -648,10 +609,8 @@ def check_saturation_and_overflow(
     return out
 
 
-def check_congestion(
-    c: ElastiflowClient, p: Policy, w: Window, counters: CounterSource, only_site: str | None = None
-) -> list[Finding]:
-    """Indices de congestion : marques ECN CE (indirect) et drops par file (preuve directe, si source branchée)."""
+def check_congestion(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """Indice indirect de congestion : marques ECN CE vues en sortie."""
     logger.debug("check_congestion: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
@@ -670,31 +629,6 @@ def check_congestion(
                 site=site,
                 direction="egress",
                 samples=samples,
-            )
-        )
-        try:
-            drops = counters.queue_drops(ex.exporter, ex.ifindex, w)
-        except NotImplementedError:
-            logger.debug("Source de compteurs non implémentée pour {}", ex.exporter)
-            continue
-        if drops is None:
-            continue
-        lost = sum(drops.par_file.values())
-        out.append(
-            _finding(
-                p,
-                "congestion_drops",
-                Severity.CRIT if lost else Severity.OK,
-                f"{site.name}/{ex.name}",
-                f"{lost} paquets droppés entre {drops.depuis:%d/%m %H:%M} et "
-                f"{drops.jusqu_a:%d/%m %H:%M} UTC (intervalle d'observation contenant la fenêtre)",
-                site=site,
-                direction="egress",
-                evidence={
-                    "par_file": drops.par_file,
-                    "depuis": drops.depuis.isoformat(),
-                    "jusqu_a": drops.jusqu_a.isoformat(),
-                },
             )
         )
     logger.debug("check_congestion: sortie | {} constat(s)", len(out))
@@ -717,9 +651,6 @@ def check_counter_consistency(c: ElastiflowClient, p: Policy, w: Window, only_si
     th = p.thresholds
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
-            if (skip := _double_counted(p, "counter_consistency", site, ex, d)) is not None:
-                out.append(skip)
-                continue
             rates = _exit_rates(c, ex, w, d)
             if rates is None or not rates.usable:
                 continue  # rien à comparer : le repli éventuel est déjà signalé par « saturation »
@@ -817,24 +748,6 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
     out: list[Finding] = []
     for site in p.sites:
         if only_site and site.name != only_site:
-            continue
-        doubled = [ex for ex in site.exits if double_sampling_unresolved(ex.exporter)]
-        if doubled:
-            # une sortie comptée deux fois fausse la part de toutes les autres : le site entier est non concluant
-            out += [
-                _finding(
-                    p,
-                    "exit_balance",
-                    Severity.INCONCLUSIVE,
-                    f"{site.name}/{ex.name}",
-                    f"{_DOUBLE_COUNTED} : {', '.join(sorted({d.exporter for d in doubled}))}",
-                    site=site,
-                    direction="egress",
-                    evidence={"exporters": sorted({d.exporter for d in doubled}), "sampling_direction": "both"},
-                )
-                for ex in site.exits
-                if ex.role == "secours"
-            ]
             continue
         totals = {}
         for ex in site.exits:
@@ -1083,9 +996,6 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
     for site, ex in _exits(p, only_site):
         rec = recommended_sampling(ex.capacity_bps, sp)
         for d in _DIRS:
-            if (skip := _double_counted(p, "sampling_adequacy", site, ex, d)) is not None:
-                out.append(skip)
-                continue
             rows = c.bytes_by(w, ["in_if", "sampling"], exit_filter(ex.exporter, ex.ifindex, d))
             samples = sum(r["samples"] for r in rows)
             subject = f"{site.name}/{ex.name}"
@@ -1279,8 +1189,8 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
         if e is None:
             add(name, "exporteur absent de la calibration")
             continue
-        if e.sampling_direction == "both" and not double_sampling_filtered(name):
-            add(name, f"{_DOUBLE_COUNTED} ; ajouter le champ au mapping ou échantillonner dans un seul sens")
+        if e.sampling_direction == "both":
+            add(name, "échantillonnage entrée+sortie : double comptage possible, non traité")
         if e.counter_interval_s > 60:
             add(name, f"intervalle de compteurs {e.counter_interval_s} s (30 s recommandé)")
         for msg in _exporter_scope(e, cal, today, th["calibration_max_age_days"]):
@@ -1290,77 +1200,10 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     return result
 
 
-def apply_bytes_margin(p: Policy, cal: Calibration) -> Policy:
-    """Politique dont la marge sur les octets est celle mesurée par la validation, si elle l'est (#33).
-
-    Le CV des tailles de paquets mesuré sur les séries B et C (``elastiflow.bytes_error_cv``) remplace
-    l'hypothèse ``bytes_error_margin`` de la politique (1,25 par défaut) : la mesure prime sur l'hypothèse,
-    qui ne sert plus que de repli tant que le CV n'est pas mesuré.
-
-    Args:
-        p: Politique théorique.
-        cal: Calibration.
-
-    Returns:
-        La politique d'origine si le CV n'est pas mesuré, sinon une copie avec la marge mesurée.
-    """
-    logger.debug("apply_bytes_margin: entrée | cv={}", cal.bytes_error_cv)
-    margin = cal.bytes_error_margin()
-    if margin is None:
-        logger.debug("apply_bytes_margin: sortie | marge de la politique conservée")
-        return p
-    logger.info(
-        "Marge sur les octets : {:.3f} mesurée (CV {:g}) au lieu de {:g} (politique)",
-        margin,
-        cal.bytes_error_cv,
-        p.thresholds["bytes_error_margin"],
-    )
-    out = replace(p, thresholds={**p.thresholds, "bytes_error_margin": margin})
-    logger.debug("apply_bytes_margin: sortie | marge {:.3f}", margin)
-    return out
-
-
-def check_bytes_margin(p: Policy, cal: Calibration) -> list[Finding]:
-    """Origine de la marge appliquée à l'incertitude des octets : mesurée (séries B et C) ou supposée (#33).
-
-    Args:
-        p: Politique, marge déjà résolue par :func:`apply_bytes_margin`.
-        cal: Calibration.
-
-    Returns:
-        Un constat informatif (OK) : la gravité d'une calibration non signée est portée par ``check_calibration``.
-    """
-    logger.debug("check_bytes_margin: entrée | cv={}", cal.bytes_error_cv)
-    margin = p.thresholds["bytes_error_margin"]
-    evidence = {"bytes_error_margin": round(margin, 3), "bytes_error_cv": cal.bytes_error_cv}
-    if cal.bytes_error_cv is None:
-        f = _finding(
-            p,
-            "bytes_error_margin",
-            Severity.OK,
-            "elastiflow",
-            f"marge sur les octets supposée ({margin:g}, politique) : CV des tailles de paquets non mesuré "
-            "(séries B et C, elastiflow.bytes_error_cv)",
-            evidence=evidence,
-        )
-    else:
-        f = _finding(
-            p,
-            "bytes_error_margin",
-            Severity.OK,
-            "elastiflow",
-            f"marge sur les octets mesurée : {margin:.2f} (CV {cal.bytes_error_cv:g}, séries B et C)",
-            evidence=evidence,
-        )
-    logger.debug("check_bytes_margin: sortie | {}", f.severity.name)
-    return [f]
-
-
 def run_all(
     c: ElastiflowClient,
     p: Policy,
     w: Window,
-    counters: CounterSource | None = None,
     only_site: str | None = None,
     cal: Calibration | None = None,
 ) -> list[Finding]:
@@ -1370,7 +1213,6 @@ def run_all(
         c: Client ElastiFlow.
         p: Politique théorique.
         w: Fenêtre d'analyse.
-        counters: Source de compteurs de drops (optionnelle).
         only_site: Restreint l'audit à un site.
         cal: Calibration issue de la validation ElastiFlow (optionnelle).
 
@@ -1378,9 +1220,6 @@ def run_all(
         Liste des constats.
     """
     logger.debug("run_all: entrée | sites={} site={} calibration={}", len(p.sites), only_site, cal is not None)
-    counters = counters or NullCounters()
-    if cal is not None:
-        p = apply_bytes_margin(p, cal)
     findings: list[Finding] = []
     findings += check_marking_conformity(c, p, w, only_site)
     findings += check_dscp_plan(c, p, w, only_site)
@@ -1389,13 +1228,12 @@ def run_all(
     findings += check_port_ranges(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
-    findings += check_congestion(c, p, w, counters, only_site)
+    findings += check_congestion(c, p, w, only_site)
     findings += check_exit_balance(c, p, w, only_site)
     findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
     if cal is not None:
         findings += check_calibration(p, cal)
-        findings += check_bytes_margin(p, cal)
         findings += check_sampling_drift(c, p, w, cal)
     logger.debug("run_all: sortie | {} constat(s)", len(findings))
     return findings

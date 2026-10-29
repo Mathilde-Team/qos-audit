@@ -5,6 +5,10 @@ de l'opérateur) est confrontée aux **mesures sFlow** collectées par ElastiFlo
 Une **extraction** produit la politique théorique depuis les configurations Comware. Un moteur de **recommandation** propose des reclassements et génère un brouillon de configuration Comware.
 Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fiabilise l'instrument de mesure.
 
+**Périmètre.** Les Comware ne font que marquer ; la priorisation est faite par les routeurs de l'opérateur, hors d'accès.
+Le sFlow est pris sur le site distant : l'outil compare le marquage des paquets à l'arrivée à la QoS théorique. Il ne
+mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
+
 ## Commandes
 
 | Commande | Rôle |
@@ -13,7 +17,6 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 | `qos-audit advise` | Découverte des flux non classifiés, recommandations d'après le catalogue validé, brouillon de config Comware. |
 | `qos-audit compare` | Compare deux rapports d'audit (avant/après un changement). |
 | `qos-audit sampling` | Calcule le sampling recommandé par débit de lien ou par sortie, et l'erreur attendue. |
-| `qos-audit sondes` | Priorisation vue par les sondes actives par classe (`sondes.csv` de la série S d'Elastiflow-Validation) : priorisation inversée, congestion hors QoS. Aussi `audit --sondes`. Sans OpenSearch. |
 | `qos-audit extract` | Extrait la QoS théorique (ACL + marquage) des configurations Comware : `policy.extracted.yaml` et rapport. |
 
 ## Démarrage
@@ -26,16 +29,10 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
     qos-audit advise --policy policies/policy.example.yaml --catalog catalogs/catalog.example.yaml \
                      --calibration calibrations/calibration.example.yaml --opensearch http://es:9200
     qos-audit compare avant.json apres.json
-    qos-audit sondes --policy policies/policy.example.yaml --sondes sondes.csv [--site site-a] --out qos_sondes.json
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --ifindex-map configs/ifindex.csv --out qos_extract/
     # une politique par site (policy.<site>.yaml), puis audit de chaque site avec sa politique
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
     qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 [--site site-a]
-    # drops par file en SSH Comware (issue #10) : « uv sync --extra comware », identifiants par
-    # QOS_AUDIT_SSH_USER / QOS_AUDIT_SSH_PASSWORD (jamais journalisés), CSV des sorties d'extract.
-    # Les drops ne se mesurent qu'entre deux exécutions encadrant la fenêtre (cf. docs/LIMITES.md).
-    qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 \
-                     --comware-drops etat-drops.json --comware-interfaces configs/ifindex.csv
 
 ## Avant la première exécution
 

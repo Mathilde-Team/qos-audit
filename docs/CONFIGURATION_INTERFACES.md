@@ -42,8 +42,7 @@ est identifié (P2). Sans `out_if`, la vue sortante par interface WAN est inexpl
 | `agent ip` | Loopback stable | L'IP exportatrice reste la même si un lien tombe |
 | NTP | Partout | Fenêtres d'analyse alignées |
 
-Vérifications côté équipement : `display sflow`, `display counters rate inbound interface <if>`, `display cpu-usage`,
-`display qos queue-statistics interface <if> outbound`.
+Vérifications côté équipement : `display sflow`, `display counters rate inbound interface <if>`, `display cpu-usage`.
 
 ## 3. Quelles interfaces échantillonner et à quel taux
 
@@ -70,7 +69,7 @@ plusieurs ports, ils doivent tous avoir un taux compatible avec la capacité de 
 | Mode | Conséquence | Prise en compte |
 |---|---|---|
 | Entrée seule (`inbound`) | Chaque paquet est vu une fois par équipement | Cas nominal |
-| Entrée et sortie (`both`) | Un même paquet peut être vu deux fois, à l'entrée et à la sortie | Avec le champ `sampler_if` (interface de l'échantillonneur) dans le mapping : seuls les échantillons prélevés sur l'interface WAN sont retenus. Sans lui : contrôles de volume non concluants et WARN `calibration` (#26, voir CONTROLES.md) |
+| Entrée et sortie (`both`) | Un même paquet peut être vu deux fois, à l'entrée et à la sortie | **Non traité** : l'outil le signale (`calibration`) |
 
 ## 6. Export sFlow
 

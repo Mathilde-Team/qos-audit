@@ -17,10 +17,7 @@ __all__ = [
     "SchemaError",
     "Window",
     "configure_counter_fields",
-    "configure_double_sampling",
     "configure_fields",
-    "double_sampling_filtered",
-    "double_sampling_unresolved",
     "exit_filter",
     "mapped_fields",
 ]
@@ -41,17 +38,10 @@ FIELDS = {
     "bytes": "network.bytes",
     "packets": "network.packets",
     "sampling": "flow.sampling.interval",
-    # interface de l'échantillonneur sFlow (source_id_index du flow sample, type 0 = ifIndex) : distingue un paquet
-    # prélevé à l'entrée LAN du même paquet prélevé à la sortie WAN (#26) — À VÉRIFIER en P4
-    "sampler_if": "sflow.source_id",
 }
 
 # Clés logiques que le code n'interroge pas toujours : absentes du mapping, elles ne bloquent pas l'audit.
-OPTIONAL_FIELDS = frozenset({"ecn", "sampler_if"})
-
-# Exporteurs échantillonnés en entrée ET en sortie (#26) : ``filtered`` (seuls les échantillons prélevés sur
-# l'interface de la sortie sont retenus) ou ``unresolved`` (champ ``sampler_if`` absent : volumes non concluants).
-_DOUBLE_SAMPLING: dict[str, str] = {}
+OPTIONAL_FIELDS = frozenset({"ecn"})
 
 # Compteurs d'interface (counter samples sFlow) : à VÉRIFIER contre le schéma de la version ElastiFlow déployée
 # (valeurs relevées sur les index patterns « telemetry » publiés par ElastiFlow ; netif.* en schéma ECS).
@@ -156,44 +146,6 @@ def configure_fields(overrides: dict[str, str]) -> None:
     logger.debug("configure_fields: sortie | {} champs", len(FIELDS))
 
 
-def configure_double_sampling(exporters: set[str], sampler_available: bool) -> dict[str, str]:
-    """Traitement du double échantillonnage (entrée + sortie) des exporteurs ``sampling_direction: both`` (#26).
-
-    Avec le champ ``sampler_if`` dans le mapping, :func:`exit_filter` ne retient pour une sortie que les échantillons
-    prélevés sur son interface (option A). Sans lui, les contrôles de volume de ces exporteurs sont non concluants
-    (option C) : rien ne distingue alors l'échantillon d'entrée de celui de sortie.
-
-    Args:
-        exporters: Exporteurs échantillonnés dans les deux sens (remplace la configuration précédente).
-        sampler_available: ``sampler_if`` est présent dans le mapping de l'index.
-
-    Returns:
-        ``{exporteur: "filtered" | "unresolved"}``.
-    """
-    logger.debug("configure_double_sampling: entrée | {} exporteur(s) champ={}", len(exporters), sampler_available)
-    mode = "filtered" if sampler_available else "unresolved"
-    _DOUBLE_SAMPLING.clear()
-    _DOUBLE_SAMPLING.update(dict.fromkeys(exporters, mode))
-    logger.debug("configure_double_sampling: sortie | {}", dict(_DOUBLE_SAMPLING))
-    return dict(_DOUBLE_SAMPLING)
-
-
-def double_sampling_unresolved(exporter: str) -> bool:
-    """L'exporteur est échantillonné dans les deux sens sans moyen d'écarter le doublon (option C de #26)."""
-    logger.debug("double_sampling_unresolved: entrée | {}", exporter)
-    unresolved = _DOUBLE_SAMPLING.get(exporter) == "unresolved"
-    logger.debug("double_sampling_unresolved: sortie | {}", unresolved)
-    return unresolved
-
-
-def double_sampling_filtered(exporter: str) -> bool:
-    """L'exporteur est échantillonné dans les deux sens et le doublon est écarté par ``sampler_if`` (option A)."""
-    logger.debug("double_sampling_filtered: entrée | {}", exporter)
-    filtered = _DOUBLE_SAMPLING.get(exporter) == "filtered"
-    logger.debug("double_sampling_filtered: sortie | {}", filtered)
-    return filtered
-
-
 @dataclass(frozen=True)
 class Window:
     """Fenêtre d'analyse."""
@@ -220,16 +172,12 @@ def exit_filter(exporter: str, ifindex: int, direction: str) -> dict:
         direction: ``egress`` (sortant : interface de sortie = WAN) ou ``ingress`` (entrant).
 
     Returns:
-        Clause ``bool.filter``. Pour un exporteur échantillonné dans les deux sens dont le doublon est filtrable
-        (#26), seuls les échantillons prélevés sur l'interface WAN elle-même sont retenus.
+        Clause ``bool.filter``.
     """
     logger.debug("exit_filter: entrée | {} ifindex={} sens={}", exporter, ifindex, direction)
     if_field = FIELDS["out_if"] if direction == "egress" else FIELDS["in_if"]
-    clauses: list[dict] = [{"term": {FIELDS["exporter"]: exporter}}, {"term": {if_field: ifindex}}]
-    if double_sampling_filtered(exporter):
-        clauses.append({"term": {FIELDS["sampler_if"]: ifindex}})
-    logger.debug("exit_filter: sortie | filtre sur {} ({} clause(s))", if_field, len(clauses))
-    return {"bool": {"filter": clauses}}
+    logger.debug("exit_filter: sortie | filtre sur {}", if_field)
+    return {"bool": {"filter": [{"term": {FIELDS["exporter"]: exporter}}, {"term": {if_field: ifindex}}]}}
 
 
 class ElastiflowClient:
@@ -260,7 +208,6 @@ class ElastiflowClient:
         self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
         self._scale = scale_by_sampling
         self._overhead = bytes_overhead_per_packet
-        self._present: set[str] | None = None
         logger.debug(
             "ElastiflowClient.__init__: sortie | index={} compteurs={} échelle={} overhead={}",
             self._index,
@@ -285,28 +232,6 @@ class ElastiflowClient:
         logger.debug("required_keys -> {}", sorted(keys))
         return keys
 
-    def _mapped(self) -> set[str]:
-        """Champs du mapping de l'index, relevés une fois par client."""
-        logger.debug("_mapped: entrée | index={} en cache={}", self._index, self._present is not None)
-        if self._present is None:
-            self._present = mapped_fields(self._os.indices.get_mapping(index=self._index))
-        logger.debug("_mapped: sortie | {} champ(s)", len(self._present))
-        return self._present
-
-    def has_field(self, key: str) -> bool:
-        """La clé logique ``key`` de ``FIELDS`` existe dans le mapping de l'index (champ optionnel, #26).
-
-        Args:
-            key: Clé logique de ``FIELDS``.
-
-        Returns:
-            ``True`` si le champ correspondant est mappé.
-        """
-        logger.debug("has_field: entrée | {} = {}", key, FIELDS[key])
-        present = FIELDS[key] in self._mapped()
-        logger.debug("has_field: sortie | {}", present)
-        return present
-
     def check_fields(self) -> None:
         """Vérifie que chaque champ interrogé existe dans le mapping de l'index (issue #16).
 
@@ -314,7 +239,7 @@ class ElastiflowClient:
             SchemaError: Si des champs sont absents ; le message liste les clés et les noms attendus.
         """
         logger.debug("check_fields : index={}", self._index)
-        present = self._mapped()
+        present = mapped_fields(self._os.indices.get_mapping(index=self._index))
         missing = {k: FIELDS[k] for k in self.required_keys() if FIELDS[k] not in present}
         if missing:
             err = SchemaError(self._index, missing)

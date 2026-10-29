@@ -28,7 +28,7 @@ Exemple minimal d'`attendus.json` (scénario « EF émis depuis un port non fiab
     {"check": "trust", "subject": "sw-acc-01:if10", "severity": "CRIT", "message_contains": "DSCP 46"}
   ],
   "interdits": [
-    {"check": "congestion_drops", "severity": "CRIT"}
+    {"check": "dscp_plan", "severity": "CRIT"}
   ]
 }
 ```

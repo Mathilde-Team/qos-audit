@@ -36,9 +36,7 @@ def _correspond(row: dict, attendu: dict) -> bool:
     if "severity" in attendu and row.get("severity") != attendu["severity"]:
         return False
     fragment = attendu.get("message_contains")
-    if fragment and fragment not in (row.get("message") or ""):
-        return False
-    return True
+    return not fragment or fragment in (row.get("message") or "")
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
