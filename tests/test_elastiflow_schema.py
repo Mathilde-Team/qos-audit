@@ -66,7 +66,7 @@ def test_check_fields_ok_when_all_present() -> None:
 
 
 def test_check_fields_reports_missing_sampling_field() -> None:
-    present = [v for k, v in FIELDS.items() if k != "sampling"] + ["flow.sampling_interval"]
+    present = [v for k, v in FIELDS.items() if k != "sampling"]
     c = _client(_mapping(present))
     with pytest.raises(SchemaError) as exc:
         c.check_fields()
@@ -100,7 +100,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
 
 
 def _raise(_self: ElastiflowClient) -> None:
-    raise SchemaError("elastiflow-flow-*", {"sampling": "flow.sampling.interval"})
+    raise SchemaError("elastiflow-flow-*", {"sampling": "flow.sampling_interval"})
 
 
 @pytest.mark.parametrize("command", [cli._audit, cli._advise])

@@ -7,6 +7,12 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+### Corrigé
+- Champ d'échantillonnage aligné sur la documentation ElastiFlow (#16) : `FIELDS["sampling"]` passe de
+  `flow.sampling.interval` à `flow.sampling_interval` (nom confirmé par la doc du collecteur ElastiFlow,
+  github.com/robcowart/elastiflow issue #116), ce qui lève l'incohérence entre le protocole de validation et le code ;
+  tests mis en cohérence. La validation du mapping réel (phase 0, P4) reste à faire en production.
+
 ### Retiré
 - Recentrage sur le marquage (#78) : les Comware ne font que marquer, la priorisation est faite par les routeurs de
   l'opérateur (hors d'accès) et le sFlow est pris sur le site distant. Sont retirés : la collecte SSH des drops par file
