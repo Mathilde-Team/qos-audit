@@ -1,0 +1,9 @@
+{
+  "attendus": [
+    {"check": "sampling_adequacy", "subject": "site-a/wan1", "direction": "egress", "severity": "CRIT", "message_contains": "1:4096"}
+  ],
+  "interdits": [
+    {"check": "trust", "severity": "CRIT"},
+    {"check": "saturation", "severity": "CRIT"}
+  ]
+}

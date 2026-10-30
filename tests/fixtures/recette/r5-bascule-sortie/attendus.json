@@ -1,0 +1,8 @@
+{
+  "attendus": [
+    {"check": "exit_balance", "subject": "site-a/wan2", "direction": "egress", "severity": "WARN", "message_contains": "90.0%"}
+  ],
+  "interdits": [
+    {"check": "saturation", "severity": "CRIT"}
+  ]
+}

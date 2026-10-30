@@ -7,6 +7,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+### Ajouté
+- Scénarios de rejeu synthétiques R1-R6 (#36) : les six défauts connus de la série R sont archivés dans
+  `tests/fixtures/recette/` (rapport au format `audit --out` + attendus) et rejoués en CI comme non-régression,
+  gabarits prêts à recevoir les rapports réels du banc ; générateur `scripts/recette_scenarios_synthetiques.py`.
+
 ### Corrigé
 - Champ d'échantillonnage aligné sur la documentation ElastiFlow (#16) : `FIELDS["sampling"]` passe de
   `flow.sampling.interval` à `flow.sampling_interval` (nom confirmé par la doc du collecteur ElastiFlow,
