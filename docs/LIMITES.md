@@ -38,6 +38,7 @@ soit ±24 % au lieu de ±10 %.
 ## Autres limites
 
 - **Capacité ≠ vitesse du port.** Un port de 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200. Renseigner `capacity_bps`.
+- **Débit montant ≠ descendant.** Le CIR descendant peut différer du montant : renseigner `capacity_bps_down`, sinon le sens entrant est mesuré au CIR montant (contrôle `capacity`, #13).
 - **Microbursts** invisibles : buckets d'une minute par défaut (`audit --bucket`, `Window.bucket`). Un bucket plus court
   n'aide que s'il reste au-dessus du **plancher du sampling** : la colonne « bucket min s » de `qos-audit sampling` donne
   la durée pour qu'un lien chargé au seuil `link_util_warn_pct` (70 %) porte `min_samples` (300) échantillons par bucket
