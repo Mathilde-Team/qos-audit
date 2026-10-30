@@ -37,7 +37,7 @@ FIELDS = {
     "ip_proto": "network.iana_number",  # numéro de protocole IP (47 GRE, 50 ESP) — À VÉRIFIER
     "bytes": "network.bytes",
     "packets": "network.packets",
-    "sampling": "flow.sampling.interval",
+    "sampling": "flow.sampling_interval",
 }
 
 # Clés logiques que le code n'interroge pas toujours : absentes du mapping, elles ne bloquent pas l'audit.

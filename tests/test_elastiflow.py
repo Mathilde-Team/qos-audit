@@ -196,14 +196,14 @@ def test_bytes_agg_overhead_seulement() -> None:
 def test_bytes_agg_scale_seulement() -> None:
     c, _ = _flow_client(scale_by_sampling=True, bytes_overhead_per_packet=0)
     expr = c._bytes_agg()["sum"]["script"]["source"]
-    assert "Math.max(1, doc['flow.sampling.interval'].value)" in expr
+    assert "Math.max(1, doc['flow.sampling_interval'].value)" in expr
 
 
 def test_bytes_agg_scale_et_overhead() -> None:
     c, _ = _flow_client(scale_by_sampling=True, bytes_overhead_per_packet=14)
     expr = c._bytes_agg()["sum"]["script"]["source"]
     assert "- 14 * doc['network.packets'].value" in expr
-    assert "Math.max(1, doc['flow.sampling.interval'].value)" in expr
+    assert "Math.max(1, doc['flow.sampling_interval'].value)" in expr
 
 
 def test_bytes_by_une_page() -> None:

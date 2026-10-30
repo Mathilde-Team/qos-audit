@@ -79,7 +79,7 @@ def test_sampling_adequacy_recommande_la_sortie_wan_si_taux_melanges() -> None:
 @pytest.mark.parametrize(
     ("kw", "attendu_b", "attendu_q"),
     [
-        ({}, "* Math.max(1, doc['flow.sampling.interval'].value)", "Math.pow(doc['network.bytes'].value * Math.max"),
+        ({}, "* Math.max(1, doc['flow.sampling_interval'].value)", "Math.pow(doc['network.bytes'].value * Math.max"),
         ({"scale_by_sampling": False}, None, "Math.pow(doc['network.bytes'].value, 2)"),
     ],
 )
