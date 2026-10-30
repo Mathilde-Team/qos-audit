@@ -23,8 +23,10 @@ from qos_audit.checks import (
     check_congestion,
     check_dscp_plan,
     check_exit_balance,
+    check_marking_conformity,
     check_sampling_adequacy,
     check_sampling_drift,
+    check_saturation_and_overflow,
     check_untrusted_ports,
     run_all,
 )
@@ -67,9 +69,15 @@ def _cle(extra: dict | None) -> tuple[str | None, int | None, str | None]:
 class Lab:
     """Client factice : lignes par (regroupement, exporteur, ifIndex, sens), vide par défaut."""
 
-    def __init__(self, donnees: dict[tuple, list[dict]] | None = None) -> None:
+    def __init__(
+        self,
+        donnees: dict[tuple, list[dict]] | None = None,
+        timeseries: dict[tuple, list[dict]] | None = None,
+    ) -> None:
         self.donnees = donnees or {}
+        self.timeseries = timeseries or {}
         self.appels: list[tuple] = []
+        self.appels_filtres: list[dict | None] = []
 
     def check_fields(self) -> None:
         """Schéma toujours conforme (issue #16)."""
@@ -77,10 +85,12 @@ class Lab:
     def bytes_by(self, w, group_by, extra_filter=None):
         cle = (tuple(group_by), *_cle(extra_filter))
         self.appels.append(cle)
+        self.appels_filtres.append(extra_filter)
         return [dict(r) for r in self.donnees.get(cle, [])]
 
     def bytes_timeseries(self, w, extra_filter=None):
-        return []
+        cle = _cle(extra_filter)
+        return [dict(r) for r in self.timeseries.get(cle, [])]
 
     def counter_rates(self, w, exporter, ifindex):
         return []
@@ -88,6 +98,54 @@ class Lab:
 
 def _dscp(*couples: tuple[int, float], samples: int = 600) -> list[dict]:
     return [{"dscp": d, "bytes": b, "samples": samples} for d, b in couples]
+
+
+def _contraintes(filtre: dict | None) -> list[dict]:
+    """Clauses ``term``/``range`` d'un filtre OpenSearch, y compris imbriquées dans un ``bool``."""
+    out: list[dict] = []
+
+    def parcourir(clause: dict | None) -> None:
+        for cle, val in (clause or {}).items():
+            if cle in ("term", "range"):
+                out.append(val)
+            elif cle == "bool":
+                for sous in val.get("filter", []):
+                    parcourir(sous)
+
+    parcourir(filtre)
+    return out
+
+
+def test_r1_voix_rtp_en_tos0(pol):
+    # Voix sur port RTP (udp 16384-32767) émise en DSCP 0 : la classe ef ne retrouve
+    # que 5 % de ses octets marqués EF — défaut de marquage (switch d'accès non
+    # apposant la trust boundary).
+    lab = Lab({(("dscp",), "rtr-a-01", 49, "egress"): _dscp((0, 9.5e6), (46, 0.5e6))})
+    res = {f.subject: f for f in check_marking_conformity(lab, pol, W) if f.subject.endswith("/ef")}
+    f = res["site-a/wan1/ef"]
+    assert (f.check, f.severity, f.direction) == ("marking", Severity.CRIT, "egress")
+    assert f.message.startswith("5.0% conforme")
+    assert f.samples == 1200
+
+    # la requête ef porte bien la contrainte RTP de l'ACL dans un même filtre :
+    # protocole udp ET plage de ports 16384-32767 (seule l'ACL ef porte cette
+    # plage — sans elle, le scénario ne prouverait pas le marquage de la voix)
+    def _contient(flt: dict | None, clause: dict) -> bool:
+        return any(c == clause for c in _contraintes(flt))
+
+    assert any(
+        _contient(flt, {FIELDS["proto"]: "udp"}) and _contient(flt, {FIELDS["dst_port"]: {"gte": 16384, "lte": 32767}})
+        for flt in lab.appels_filtres
+    )
+    # voix correctement marquée : conforme
+    lab = Lab({(("dscp",), "rtr-a-01", 49, "egress"): _dscp((46, 9.8e6), (0, 0.2e6))})
+    res = {f.subject: f for f in check_marking_conformity(lab, pol, W) if f.subject.endswith("/ef")}
+    assert res["site-a/wan1/ef"].severity is Severity.OK
+    # échantillonnage insuffisant : non concluant
+    lab = Lab({(("dscp",), "rtr-a-01", 49, "egress"): _dscp((0, 9.5e6), (46, 0.5e6), samples=100)})
+    res = {f.subject: f for f in check_marking_conformity(lab, pol, W) if f.subject.endswith("/ef")}
+    f = res["site-a/wan1/ef"]
+    assert f.severity is Severity.INCONCLUSIVE and "200 échantillons" in f.message
 
 
 def test_r2_ef_depuis_un_port_non_fiable(pol):
@@ -148,6 +206,30 @@ def test_r6_sampling_trop_grossier(pol):
     # exporteur muet : non concluant
     muet = res[("site-a/wan2", "egress")]
     assert muet.severity is Severity.INCONCLUSIVE and "aucun enregistrement" in muet.message
+
+
+def test_r7_charge_offerte_150pct(pol):
+    # 150 % de la capacité contractuelle (200 Mbit/s) offerte en EF : saturation CRIT
+    # et débordement de la classe ef (budget 45 %) — dimensionnement global, pas un policer.
+    # Scénario synthétique en repli sur les flux échantillonnés (pas de compteurs d'interface).
+    octets_bucket = 1.5 * 200e6 / 8 * 60  # 2,25 Go par minute de bucket
+    lignes = [
+        {"ts": (T0 + timedelta(minutes=i)).isoformat(), "dscp": 46, "bytes": octets_bucket, "samples": 60}
+        for i in range(10)
+    ]
+    lab = Lab(timeseries={("rtr-a-01", 49, "egress"): lignes})
+    res = {(f.check, f.subject, f.direction): f for f in check_saturation_and_overflow(lab, pol, W)}
+    sat = res[("saturation", "site-a/wan1", "egress")]
+    assert sat.severity is Severity.CRIT
+    assert "p95 150%" in sat.message
+    assert "repli sur les flux échantillonnés" in sat.message
+    ovf = res[("class_overflow", "site-a/wan1/ef", "egress")]
+    assert ovf.severity is Severity.WARN
+    assert ovf.message.startswith("10/10 buckets au-dessus du budget")
+    assert "lien chargé : dimensionnement global" in ovf.message
+    # exporteur muet : saturation non concluante, pas de verdict de débordement
+    assert res[("saturation", "site-a/wan2", "egress")].severity is Severity.INCONCLUSIVE
+    assert not [f for f in res if f[0] == "class_overflow" and f[1].startswith("site-a/wan2/")]
 
 
 def test_congestion_ecn(pol):
