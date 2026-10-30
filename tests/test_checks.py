@@ -71,6 +71,8 @@ def test_marking_crit_when_voice_unmarked() -> None:
     f = check_marking_conformity(FakeClient([{"dscp": 0, "bytes": 1e6, "samples": 1000}]), p, W)
     ef = [x for x in f if x.subject.endswith("/ef")]
     assert ef and ef[0].severity == Severity.CRIT
+    # #31 : l'ambiguïté marquage/remarquage opérateur est explicite dans le constat
+    assert "remarquage par l'opérateur" in ef[0].message
 
 
 def test_overflow_and_saturation() -> None:

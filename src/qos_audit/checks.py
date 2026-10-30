@@ -263,14 +263,23 @@ def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_sit
                 ok = sum(r["bytes"] for r in rows if r["dscp"] in cls.dscp)
                 pct = 100 * ok / total if total else 0.0
                 sev = Severity.OK if pct >= p.thresholds["conformity_min_pct"] else Severity.CRIT
+                message = f"{pct:.1f}% conforme"
+                if sev == Severity.CRIT:
+                    # #31 : le sFlow est pris sur le site distant, à l'arrivée —
+                    # un écart peut être un mauvais marquage au départ OU un
+                    # remarquage par l'opérateur, indistinguables (décision du
+                    # propriétaire, 29/10/2026) : le rapport garde cette
+                    # ambiguïté explicite plutôt que d'incriminer le marquage.
+                    message += " — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)"
+                if not cls.dscp_confirmed:
+                    message += " (DSCP à confirmer auprès de l'opérateur)"
                 out.append(
                     _finding(
                         p,
                         "marking",
                         sev,
                         subject,
-                        f"{pct:.1f}% conforme"
-                        + ("" if cls.dscp_confirmed else " (DSCP à confirmer auprès de l'opérateur)"),
+                        message,
                         site=site,
                         direction="egress",
                         samples=samples,

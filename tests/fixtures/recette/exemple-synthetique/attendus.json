@@ -9,7 +9,8 @@
     {
       "check": "marking",
       "subject": "site-a/wan1/ef",
-      "severity": "CRIT"
+      "severity": "CRIT",
+      "message_contains": "remarquage par l'opérateur"
     },
     {
       "check": "calibration",
