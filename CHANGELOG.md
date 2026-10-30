@@ -8,6 +8,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
+- CIR par sens (#13) : `capacity_bps_down` (CIR descendant, débit montant ≠ descendant) dans la politique, utilisé par
+  saturation, débordement de classe et sampling du sens entrant (repli sur `capacity_bps` si absent, WARN du contrôle
+  `capacity`) ; relevé de contrat par sortie : `operator`, `contract_ref`, `peak_bps` (informatifs, dans l'évidence).
 - Scénarios de rejeu synthétiques R1-R6 (#36) : les six défauts connus de la série R sont archivés dans
   `tests/fixtures/recette/` (rapport au format `audit --out` + attendus) et rejoués en CI comme non-régression,
   gabarits prêts à recevoir les rapports réels du banc ; générateur `scripts/recette_scenarios_synthetiques.py`.

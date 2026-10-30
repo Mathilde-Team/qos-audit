@@ -66,6 +66,8 @@ def _load_exit(raw: dict) -> Exit:
 
     Sans ``capacity_bps``, la capacité retombe sur ``speed_bps`` et la sortie est marquée
     ``capacity_declared=False`` : le contrôle ``capacity`` (#13) le signale dans le rapport.
+    ``capacity_bps_down`` (CIR descendant, débit montant ≠ descendant) suit la même règle ;
+    ``operator``, ``contract_ref`` et ``peak_bps`` sont le relevé de contrat, informatifs.
 
     Args:
         raw: Entrée ``exits`` d'un site.
@@ -81,6 +83,11 @@ def _load_exit(raw: dict) -> Exit:
             "Sortie {}: capacity_bps absent, repli sur speed_bps (utilisation sous-estimée si CIR < port)", raw["name"]
         )
         capacity = raw["speed_bps"]
+    down = raw.get("capacity_bps_down")
+    if down is None:
+        logger.warning(
+            "Sortie {}: capacity_bps_down absent, repli sur capacity_bps (CIR descendant inconnu)", raw["name"]
+        )
     ex = Exit(
         name=raw["name"],
         exporter=raw["exporter"],
@@ -89,6 +96,11 @@ def _load_exit(raw: dict) -> Exit:
         capacity_bps=int(capacity),
         role=raw.get("role", "principal"),
         capacity_declared=declared,
+        operator=raw.get("operator"),
+        contract_ref=raw.get("contract_ref"),
+        peak_bps=int(raw["peak_bps"]) if raw.get("peak_bps") is not None else None,
+        capacity_bps_down=int(down) if down is not None else None,
+        capacity_down_declared=down is not None,
     )
     logger.debug("_load_exit: sortie | {} capacity_bps={} déclarée={}", ex.name, ex.capacity_bps, declared)
     return ex
