@@ -1,0 +1,9 @@
+{
+  "attendus": [
+    {"check": "trust", "subject": "sw-acc-01:if10", "severity": "CRIT", "message_contains": "DSCP 46"}
+  ],
+  "interdits": [
+    {"check": "marking", "severity": "CRIT"},
+    {"check": "saturation", "severity": "CRIT"}
+  ]
+}

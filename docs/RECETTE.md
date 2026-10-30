@@ -44,6 +44,16 @@ Exemple minimal d'`attendus.json` (scénario « EF émis depuis un port non fiab
 | R5 | Bascule de sortie | contrôle de bascule (`exit_balance`) |
 | R6 | Sampling trop lâche sur un lien 10 Mbit/s | `sampling_adequacy` |
 
+## Scénarios synthétiques R1-R6
+
+En attendant les rapports réels du banc, les six scénarios de la série R sont déjà
+archivés dans `tests/fixtures/recette/` (préfixe `r<n>-`) : ils sont produits depuis le
+client factice de la recette synthétique par `uv run python scripts/recette_scenarios_synthetiques.py`
+(`rapport.json` au format exact de `audit --out`, `attendus.json` écrit à la main) et
+rejoués en CI comme non-régression. Quand le banc livre un rapport réel pour un scénario,
+il se dépose au même endroit et remplace la version synthétique (le générateur ne régénère
+que les scénarios synthétiques restants).
+
 ## Déposer un rapport du banc
 
 1. Dérouler le scénario sur le banc (plan YAML ElastiFlow-Validation#3) et collecter

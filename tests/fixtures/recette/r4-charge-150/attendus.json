@@ -1,0 +1,9 @@
+{
+  "attendus": [
+    {"check": "saturation", "subject": "site-a/wan1", "direction": "egress", "severity": "CRIT", "message_contains": "p95 150%"},
+    {"check": "class_overflow", "subject": "site-a/wan1/ef", "direction": "egress", "severity": "WARN", "message_contains": "10/10 buckets"}
+  ],
+  "interdits": [
+    {"check": "marking", "severity": "CRIT"}
+  ]
+}

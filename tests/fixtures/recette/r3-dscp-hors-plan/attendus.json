@@ -1,0 +1,9 @@
+{
+  "attendus": [
+    {"check": "dscp_plan", "subject": "site-a/wan1", "direction": "egress", "severity": "WARN", "message_contains": "5.00%"}
+  ],
+  "interdits": [
+    {"check": "trust", "severity": "CRIT"},
+    {"check": "saturation", "severity": "CRIT"}
+  ]
+}
