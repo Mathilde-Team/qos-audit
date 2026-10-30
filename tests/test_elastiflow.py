@@ -302,3 +302,32 @@ def test_bytes_timeseries_mappe_les_buckets() -> None:
     ]
     body = os_mock.search.call_args.kwargs["body"]
     assert body["aggs"]["t"]["date_histogram"]["fixed_interval"] == "1m"
+
+
+def test_client_transmet_authentification_et_tls(monkeypatch) -> None:
+    """Authentification basique et options TLS passent à opensearch-py (#17) ; sans options, rien."""
+
+    capturés: dict = {}
+
+    class FauxOpenSearch:
+        def __init__(self, hosts, **options):
+            capturés["hosts"] = hosts
+            capturés.update(options)
+
+    monkeypatch.setattr(elastiflow, "OpenSearch", FauxOpenSearch)
+    elastiflow.ElastiflowClient(
+        ["https://os.example:9200"],
+        username="svc-qos",
+        password="secret",
+        verify_certs=True,
+        ca_certs="/etc/qos/ca.pem",
+    )
+    assert capturés["hosts"] == ["https://os.example:9200"]
+    assert capturés["http_auth"] == ("svc-qos", "secret")
+    assert capturés["verify_certs"] is True
+    assert capturés["ca_certs"] == "/etc/qos/ca.pem"
+
+    # sans options d'authentification ni TLS : rien n'est transmis à opensearch-py
+    capturés.clear()
+    elastiflow.ElastiflowClient(["http://localhost:9200"])
+    assert capturés == {"hosts": ["http://localhost:9200"]}

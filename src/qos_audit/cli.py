@@ -93,6 +93,10 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         scale_by_sampling=not cal.sampling_already_applied,
         bytes_overhead_per_packet=cal.bytes_overhead_per_packet,
         counters_index=cal.counters_index,
+        username=getattr(a, "os_user", None) or os.environ.get("QOS_AUDIT_OS_USER"),
+        password=os.environ.get("QOS_AUDIT_OS_PASSWORD"),
+        verify_certs=False if getattr(a, "os_insecure", False) else None,
+        ca_certs=str(a.os_ca_certs) if getattr(a, "os_ca_certs", None) else None,
     )
     client.check_fields()
     window = _window(a.minutes, lag, getattr(a, "bucket", "1m"))
@@ -293,6 +297,13 @@ def main() -> int:
         s.add_argument("--policy", type=Path, required=True, help="politique, ou dossier de extract --per-site")
         s.add_argument("--calibration", type=Path, help="calibration.yaml issue de la validation d'ElastiFlow")
         s.add_argument("--opensearch", nargs="+", default=["http://localhost:9200"])
+        s.add_argument("--os-user", help="utilisateur OpenSearch (défaut : $QOS_AUDIT_OS_USER)")
+        s.add_argument("--os-ca-certs", type=Path, help="bundle CA (PEM) pour TLS vers OpenSearch")
+        s.add_argument(
+            "--os-insecure",
+            action="store_true",
+            help="désactive la vérification du certificat TLS (dépannage uniquement)",
+        )
         s.add_argument("--minutes", type=int, default=60)
         s.add_argument(
             "--bucket", type=_bucket_arg, default="1m", help="pas des buckets (10s, 1m…), plancher : qos-audit sampling"

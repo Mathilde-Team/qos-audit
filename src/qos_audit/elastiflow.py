@@ -190,6 +190,10 @@ class ElastiflowClient:
         scale_by_sampling: bool = True,
         bytes_overhead_per_packet: int = 0,
         counters_index: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        verify_certs: bool | None = None,
+        ca_certs: str | None = None,
     ) -> None:
         """Initialise le client.
 
@@ -201,9 +205,21 @@ class ElastiflowClient:
             bytes_overhead_per_packet: Octets à retrancher par paquet pour passer de la base trame à la base IP
                 (14 si ElastiFlow additionne des octets de trame ; résultat de la phase 0, P5).
             counters_index: Pattern d'index des counter samples sFlow (défaut : ``DEFAULT_COUNTERS_INDEX``).
+            username: Utilisateur OpenSearch (authentification basique ; #17). Le mot de passe ne se met pas
+                dans un fichier du dépôt : la CLI le lit dans ``QOS_AUDIT_OS_PASSWORD``.
+            password: Mot de passe OpenSearch, jamais en argument de ligne de commande (historique de shell).
+            verify_certs: Vérification TLS (None : comportement d'opensearch-py selon le schéma de l'URL).
+            ca_certs: Bundle CA (PEM) pour vérifier le certificat du serveur (TLS, #17).
         """
         logger.debug("ElastiflowClient.__init__: entrée | hotes={} index={}", len(hosts), index)
-        self._os = OpenSearch(hosts=hosts)
+        options: dict = {}
+        if username is not None:
+            options["http_auth"] = (username, password or "")
+        if ca_certs is not None:
+            options["ca_certs"] = ca_certs
+        if verify_certs is not None:
+            options["verify_certs"] = verify_certs
+        self._os = OpenSearch(hosts=hosts, **options)
         self._index = index
         self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
         self._scale = scale_by_sampling

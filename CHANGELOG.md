@@ -8,6 +8,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
+- Authentification et TLS vers OpenSearch (#17) : `ElastiflowClient` accepte `username`/`password`
+  (authentification basique) et `verify_certs`/`ca_certs` ; la CLI lit `$QOS_AUDIT_OS_USER`/`$QOS_AUDIT_OS_PASSWORD`
+  et propose `--os-user`, `--os-ca-certs`, `--os-insecure`. Identifiants hors du dépôt.
 - Scénarios de rejeu synthétiques R1-R6 (#36) : les six défauts connus de la série R sont archivés dans
   `tests/fixtures/recette/` (rapport au format `audit --out` + attendus) et rejoués en CI comme non-régression,
   gabarits prêts à recevoir les rapports réels du banc ; générateur `scripts/recette_scenarios_synthetiques.py`.
