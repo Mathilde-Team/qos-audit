@@ -35,6 +35,10 @@ mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
     qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 [--site site-a]
 
+OpenSearch peut exiger une authentification et TLS (#17) : `--os-user` (ou `$QOS_AUDIT_OS_USER`) et
+`$QOS_AUDIT_OS_PASSWORD` (jamais en argument de ligne de commande, pour l'historique de shell), avec
+`--os-ca-certs` (bundle CA) ou `--os-insecure` (dépannage, désactive la vérification du certificat).
+
 ## Avant la première exécution
 
 1. Dérouler la phase 0 de la validation d'ElastiFlow et renseigner `calibration.yaml` (champs, facteur d'échantillonnage,

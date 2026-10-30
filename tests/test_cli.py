@@ -88,3 +88,46 @@ def test_audit_ecrit_rapport_vide_sans_donnees(monkeypatch, tmp_path: Path) -> N
     findings = json.loads(out.read_text("utf-8"))
     assert rc in (0, 1)
     assert all(f["severity"] in ("OK", "INCONCLUSIVE", "WARN") for f in findings)
+
+
+def test_audit_transmet_authentification_et_tls(monkeypatch, tmp_path: Path) -> None:
+    """--os-user/--os-ca-certs/--os-insecure et l'environnement atteignent le client (#17).
+
+    Le mot de passe ne passe que par la variable d'environnement, jamais par la ligne de commande.
+    """
+
+    class Muet(FakeClient):
+        def bytes_by(self, *_args, **_kw) -> list[dict]:
+            return []
+
+        def bytes_timeseries(self, *_args, **_kw) -> list[dict]:
+            return []
+
+    capturés: dict = {}
+
+    def fabrique(*_args, **kw):
+        capturés.update(kw)
+        return Muet()
+
+    monkeypatch.setattr(cli, "ElastiflowClient", fabrique)
+    monkeypatch.setenv("QOS_AUDIT_OS_USER", "svc-qos")
+    monkeypatch.setenv("QOS_AUDIT_OS_PASSWORD", "secret")
+    out = tmp_path / "qos_report.json"
+    argv = [
+        "audit",
+        "--policy",
+        str(ROOT / "policies" / "policy.example.yaml"),
+        "--out",
+        str(out),
+        "--os-user",
+        "svc-qos",
+        "--os-ca-certs",
+        "/etc/qos/ca.pem",
+        "--os-insecure",
+    ]
+    rc = _run(monkeypatch, argv)
+    assert rc in (0, 1)
+    assert capturés["username"] == "svc-qos"
+    assert capturés["password"] == "secret"
+    assert capturés["ca_certs"] == "/etc/qos/ca.pem"
+    assert capturés["verify_certs"] is False
