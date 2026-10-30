@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from qos_audit.advisor.bulk import render_shaper_policy
 from qos_audit.advisor.catalog import load_catalog
 from qos_audit.advisor.discover import discover_unclassified
 from qos_audit.advisor.recommend import recommend
@@ -33,8 +35,14 @@ from qos_audit.comware.extract import (
 from qos_audit.comware.snmp import COMMUNITY_ENV, build_ifindex_rows, parse_exporters, write_ifindex_csv
 from qos_audit.elastiflow import ElastiflowClient, SchemaError, Window
 from qos_audit.models import Finding, Severity
-from qos_audit.policy import load_policies, load_policy
-from qos_audit.sampling import SamplingParams, expected_error_pct, recommended_sampling, worst_case_samples_per_s
+from qos_audit.policy import DEFAULT_THRESHOLDS, load_policies, load_policy
+from qos_audit.sampling import (
+    SamplingParams,
+    expected_error_pct,
+    min_bucket_seconds,
+    recommended_sampling,
+    worst_case_samples_per_s,
+)
 from qos_audit.sflow import load_configs, render_calibration_yaml, sflow_findings, to_calibration_section
 from qos_audit.verify import compare_reports
 
@@ -43,13 +51,27 @@ __all__ = ["main"]
 _EXIT_CODE = {0: 0, 1: 0, 2: 1, 3: 2}  # OK/INCONCLUSIVE -> 0, WARN -> 1, CRIT -> 2
 
 
-def _window(minutes: int, lag_minutes: int) -> Window:
+def _window(minutes: int, lag_minutes: int, bucket: str = "1m") -> Window:
     """Fenêtre d'analyse décalée du délai d'ingestion d'ElastiFlow (phase 0, P7)."""
     logger.debug("_window: entrée | {} min, lag {} min", minutes, lag_minutes)
     end = datetime.now(UTC) - timedelta(minutes=lag_minutes)
-    win = Window(start=end - timedelta(minutes=minutes), end=end)
-    logger.debug("_window: sortie | [{}..{}]", win.start, win.end)
+    win = Window(start=end - timedelta(minutes=minutes), end=end, bucket=bucket)
+    logger.debug("_window: sortie | [{}..{}] bucket {}", win.start, win.end, win.bucket)
     return win
+
+
+def _bucket_arg(value: str) -> str:
+    """Valide une taille de bucket (``10s``, ``1m``, ``1h``) pour ``--bucket`` (#28).
+
+    Raises:
+        argparse.ArgumentTypeError: Format illisible ou durée nulle.
+    """
+    logger.debug("_bucket_arg: entrée | {}", value)
+    if not re.fullmatch(r"[1-9][0-9]*[smh]", value):
+        logger.error("Taille de bucket illisible : {}", value)
+        raise argparse.ArgumentTypeError(f"bucket illisible : {value!r} (attendu 10s, 1m, 1h)")
+    logger.debug("_bucket_arg: retour | {}", value)
+    return value
 
 
 def _calibration(a: argparse.Namespace) -> Calibration:
@@ -63,7 +85,7 @@ def _calibration(a: argparse.Namespace) -> Calibration:
 
 
 def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window]:
-    logger.debug("_setup: entrée | opensearch={}", len(a.opensearch))
+    logger.debug("_setup: entrée | opensearch={} bucket {}", len(a.opensearch), getattr(a, "bucket", "1m"))
     cal = _calibration(a)
     lag = a.ingest_lag_minutes if a.ingest_lag_minutes is not None else cal.ingest_lag_minutes
     client = ElastiflowClient(
@@ -73,8 +95,8 @@ def _setup(a: argparse.Namespace) -> tuple[ElastiflowClient, Calibration, Window
         counters_index=cal.counters_index,
     )
     client.check_fields()
-    window = _window(a.minutes, lag)
-    logger.debug("_setup: sortie | calibration chargée")
+    window = _window(a.minutes, lag, getattr(a, "bucket", "1m"))
+    logger.debug("_setup: sortie | calibration chargée, bucket {}", window.bucket)
     return client, cal, window
 
 
@@ -89,8 +111,10 @@ def _audit(a: argparse.Namespace) -> int:
         return 2
     rows: list[dict] = []
     worst = 0
+    # catalogue optionnel : contrôle du trafic de masse hors plage (#34)
+    bulk = {"apps": load_catalog(a.catalog), "tz": a.timezone} if a.catalog else {}
     for policy in load_policies(a.policy, a.site):
-        findings = run_all(client, policy, window, only_site=a.site, cal=cal)
+        findings = run_all(client, policy, window, only_site=a.site, cal=cal, **bulk)
         for f in findings:
             row = asdict(f) | {"severity": f.severity.name}
             if row not in rows:  # constats globaux (calibration) répétés d'un site à l'autre
@@ -121,6 +145,9 @@ def _advise(a: argparse.Namespace) -> int:
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "recommandations.json").write_text(json.dumps([asdict(r) for r in recos], indent=2), encoding="utf-8")
     (a.out / "brouillon_comware.cfg").write_text(render_marking_policy(recos), encoding="utf-8")
+    shaper = render_shaper_policy(recos)
+    if shaper:  # trafic de masse sans classe sous BF (#34)
+        (a.out / "brouillon_shaper.cfg").write_text(shaper, encoding="utf-8")
     logger.info("{} recommandations écrites dans {}", len(recos), a.out)
     logger.debug("_advise: sortie | 0")
     return 0
@@ -178,7 +205,9 @@ def _sampling(a: argparse.Namespace) -> int:
     sp = SamplingParams(
         floor_ratio=a.floor_ratio, window_s=a.window_s, size_bytes=a.size, error_target_pct=a.error_target
     )
-    head = f"{'lien':<28}{'Mbit/s':>9}{'recommandé':>12}{'configuré':>11}{'erreur %':>10}{'éch./s pire cas':>17}"
+    min_samples = int(DEFAULT_THRESHOLDS["min_samples"])
+    load_ratio = DEFAULT_THRESHOLDS["link_util_warn_pct"] / 100
+    head = f"{'lien':<28}{'Mbit/s':>9}{'recommandé':>12}{'configuré':>11}{'erreur %':>10}{'éch./s pire cas':>17}{'bucket min s':>14}"
     lines = [head]
     rows: list[tuple[str, float, int | None]] = [(f"{m:g} Mbit/s", m * 1e6, None) for m in a.link_mbps]
     if a.policy:
@@ -194,9 +223,10 @@ def _sampling(a: argparse.Namespace) -> int:
         err = expected_error_pct(bps, rate, sp)
         cost = worst_case_samples_per_s(bps, rate, sp.cost_size_bytes)
         cfg = f"1:{configured}" if configured else "-"
-        lines.append(f"{label:<28}{bps / 1e6:>9g}{'1:' + str(rec):>12}{cfg:>11}{err:>10.1f}{cost:>17.0f}")
+        floor = min_bucket_seconds(bps, rate, min_samples, load_ratio, sp.size_bytes)
+        lines.append(f"{label:<28}{bps / 1e6:>9g}{'1:' + str(rec):>12}{cfg:>11}{err:>10.1f}{cost:>17.0f}{floor:>14.0f}")
     sys.stdout.write("\n".join(lines) + "\n")
-    logger.debug("_sampling: sortie | 0")
+    logger.debug("_sampling: sortie | {} ligne(s)", len(lines) - 1)
     return 0
 
 
@@ -264,11 +294,16 @@ def main() -> int:
         s.add_argument("--calibration", type=Path, help="calibration.yaml issue de la validation d'ElastiFlow")
         s.add_argument("--opensearch", nargs="+", default=["http://localhost:9200"])
         s.add_argument("--minutes", type=int, default=60)
+        s.add_argument(
+            "--bucket", type=_bucket_arg, default="1m", help="pas des buckets (10s, 1m…), plancher : qos-audit sampling"
+        )
         s.add_argument("--ingest-lag-minutes", type=int, help="surcharge le délai d'ingestion de la calibration")
         s.add_argument("--site")
         s.set_defaults(fn=fn)
         if name == "audit":
             s.add_argument("--out", type=Path, default=Path("qos_report.json"))
+            s.add_argument("--catalog", type=Path, help="catalogue validé : active le contrôle bulk_business_hours")
+            s.add_argument("--timezone", default="Europe/Paris", help="fuseau des plages horaires du catalogue")
         else:
             s.add_argument("--catalog", type=Path, required=True)
             s.add_argument("--out", type=Path, default=Path("qos_advice"))

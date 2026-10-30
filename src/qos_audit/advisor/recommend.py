@@ -11,7 +11,10 @@ from qos_audit.advisor.discover import FlowCluster
 from qos_audit.advisor.profile import backup_evidence, thresholds_from_app
 from qos_audit.models import Policy
 
-__all__ = ["Recommendation", "recommend"]
+__all__ = ["DEFAULT_SHAPE_PCT", "Recommendation", "recommend"]
+
+DEFAULT_SHAPE_PCT = 20.0
+"""Débit du shaper de masse par défaut, en % de ``capacity_bps`` (#34) : HYPOTHÈSE, ``profile.shape_pct`` le fixe."""
 
 
 def _backup_app(apps: list[App]) -> App | None:
@@ -39,13 +42,62 @@ class Recommendation:
     proto: str
     port: int
     app: str | None
-    action: str  # "marquer" | "classifier"
+    action: str  # "marquer" | "classifier" | "contenir" (shaper de sortie, trafic de masse)
     target_class: str | None
     target_dscp: int | None
     justification: str
     confidence: str
     impact_pct: float  # part du trafic sortant concernée
     needs_validation: bool = True
+    ports: tuple[int, int] | None = None  # plage du catalogue (contenir)
+    shape_bps: int | None = None  # débit du shaper de sortie (contenir)
+    allowed_hours: str | None = None  # plage horaire autorisée du catalogue, ex. « 22-06 » (contenir)
+
+
+def _contain(cl: FlowCluster, app: App, p: Policy) -> Recommendation | None:
+    """Recommandation « contenir » d'un flux de masse (``profile.bulk``) : shaper de sortie hors plage autorisée.
+
+    Args:
+        cl: Flux découvert.
+        app: Application du catalogue marquée ``bulk``.
+        p: Politique (capacité de la sortie).
+
+    Returns:
+        La recommandation, ou ``None`` si la sortie est inconnue de la politique ou le débit illisible.
+    """
+    logger.debug("_contain: entrée | {}/{} {}", cl.site, cl.exit, app.name)
+    capacity = next(
+        (ex.capacity_bps for s in p.sites if s.name == cl.site for ex in s.exits if ex.name == cl.exit), None
+    )
+    try:
+        pct = float(app.profile.get("shape_pct", DEFAULT_SHAPE_PCT))
+    except (TypeError, ValueError) as exc:
+        logger.warning("shape_pct illisible pour {} : {}", app.name, exc)
+        pct = 0.0
+    if not capacity or not 0 < pct <= 100:
+        logger.debug("_contain: retour | aucune (capacité {}, shape_pct {})", capacity, pct)
+        return None
+    hours = app.profile.get("plage_horaire")
+    when = f"hors de la plage {hours}" if hours else "en permanence (aucune plage_horaire au catalogue)"
+    reco = Recommendation(
+        cl.site,
+        cl.exit,
+        cl.proto,
+        cl.dst_port,
+        app.name,
+        "contenir",
+        app.target_class,
+        None,
+        f"{cl.share_pct:.1f}% du trafic sortant ; trafic de masse sans classe sous BF chez l'opérateur : shaper local"
+        f" à {pct:g}% de la capacité {when}",
+        app.confidence,
+        cl.share_pct,
+        ports=app.ports,
+        shape_bps=int(capacity * pct / 100),
+        allowed_hours=str(hours) if hours else None,
+    )
+    logger.debug("_contain: retour | {} bit/s", reco.shape_bps)
+    return reco
 
 
 def _find_app(cluster: FlowCluster, apps: list[App]) -> App | None:
@@ -55,9 +107,7 @@ def _find_app(cluster: FlowCluster, apps: list[App]) -> App | None:
             continue
         if a.ports and not a.ports[0] <= cluster.dst_port <= a.ports[1]:
             continue
-        logger.debug(
-            "_find_app: sortie | app trouvée",
-        )
+        logger.debug("_find_app: sortie | app trouvée : {}", a.name)
         return a
     logger.debug("_find_app: sortie | aucune application")
     return None
@@ -91,8 +141,11 @@ def recommend(
         app = _find_app(cl, apps)
         if app and app.target_class in by_class:
             target = by_class[app.target_class]
+            contain = _contain(cl, app, p) if app.profile.get("bulk") else None
+            if contain:
+                recos.append(contain)
             if cl.dscp in target.dscp:
-                continue  # déjà conforme au catalogue : rien à proposer
+                continue  # marquage déjà conforme au catalogue
             dscp = min(target.dscp)
             recos.append(
                 Recommendation(

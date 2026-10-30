@@ -7,14 +7,18 @@ adéquation du sampling, santé de la calibration.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from datetime import date, datetime
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
 from qos_audit.calibration import Calibration, ExporterCal, Validation
 from qos_audit.counters import InterfaceRates, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
+from qos_audit.hours import in_hours, parse_hours
 from qos_audit.models import (
     Direction,
     Exit,
@@ -557,6 +561,13 @@ def check_saturation_and_overflow(
                 util = {ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_bps for ts, v in by_ts.items()}
                 source = "flows"
                 note = "repli sur les flux échantillonnés (compteurs absents ou insuffisants)"
+                # plancher de bucket (#28) : sous min_samples par bucket, un bucket isolé ne prouve rien
+                per_bucket = statistics.median(samples_by_ts.get(ts, 0) for ts in util)
+                if per_bucket < th["min_samples"]:
+                    note += (
+                        f" ; {per_bucket:.0f} éch./bucket < {th['min_samples']:.0f} : bucket {w.bucket} sous le"
+                        " plancher du sampling (voir qos-audit sampling)"
+                    )
             p95 = _p95(list(util.values()))
             peak_ts = max(util, key=util.get)
             over_warn = sum(1 for u in util.values() if u >= th["link_util_warn_pct"])
@@ -582,6 +593,7 @@ def check_saturation_and_overflow(
                         "buckets": len(util),
                         "capacity_bps": ex.capacity_bps,
                         "utilization_source": source,
+                        "bucket": w.bucket,
                         **(
                             {
                                 "counter_coverage_pct": 100 * rates.coverage,
@@ -1283,12 +1295,159 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     return result
 
 
+def _bulk_filter(ex: Exit, app: Any) -> dict:
+    """Filtre de la sortie (egress) restreint au protocole et aux ports d'une application du catalogue."""
+    logger.debug("_bulk_filter: entrée | {}:{} {}", ex.exporter, ex.ifindex, app.name)
+    flt = exit_filter(ex.exporter, ex.ifindex, "egress")
+    if app.protocol:
+        flt["bool"]["filter"].append({"term": {FIELDS["proto"]: app.protocol}})
+    if app.ports:
+        flt["bool"]["filter"].append({"range": {FIELDS["dst_port"]: {"gte": app.ports[0], "lte": app.ports[1]}}})
+    logger.debug("_bulk_filter: retour | {} clause(s)", len(flt["bool"]["filter"]))
+    return flt
+
+
+def _bytes_per_bucket(series: list[dict], w: Window) -> dict[int, float]:
+    """Octets par début de bucket (toutes classes confondues)."""
+    logger.debug("_bytes_per_bucket: entrée | {} ligne(s)", len(series))
+    out: dict[int, float] = defaultdict(float)
+    for r in series:
+        key = _bucket_key(r["ts"], w)
+        if key is not None:
+            out[key] += r["bytes"]
+    logger.debug("_bytes_per_bucket: retour | {} bucket(s)", len(out))
+    return out
+
+
+def check_bulk_business_hours(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    apps: list,
+    only_site: str | None = None,
+    tz: str = "Europe/Paris",
+) -> list[Finding]:
+    """Trafic de masse hors de sa plage autorisée qui pousse une sortie en saturation (#34).
+
+    Pour chaque application du catalogue marquée ``profile.bulk`` et chaque sortie : buckets où l'utilisation
+    estimée par les flux atteint ``link_util_warn_pct`` de la capacité, où l'application porte au moins
+    ``bulk_share_warn_pct`` des octets du bucket, et dont l'heure locale (``tz``) est hors de
+    ``profile.plage_horaire`` (sans plage, toute heure compte). WARN dès un tel bucket : un shaper local
+    ou un déplacement de la plage s'impose, l'opérateur n'ayant pas de classe sous BF.
+
+    Args:
+        c: Client ElastiFlow.
+        p: Politique (sorties, capacités, seuils).
+        w: Fenêtre d'analyse.
+        apps: Catalogue validé (``advisor.catalog.App``).
+        only_site: Restreint l'audit à un site.
+        tz: Fuseau des plages horaires du catalogue (heure locale des équipements).
+
+    Returns:
+        Un constat ``bulk_business_hours`` par sortie et application de masse ayant du trafic.
+    """
+    logger.debug("check_bulk_business_hours: entrée | {} application(s), fuseau {}", len(apps), tz)
+    th = p.thresholds
+    zone = ZoneInfo(tz)
+    bulk = [a for a in apps if a.profile.get("bulk") and (a.protocol or a.ports)]
+    out: list[Finding] = []
+    for site, ex in _exits(p, only_site) if bulk else ():
+        total = _bytes_per_bucket(c.bytes_timeseries(w, exit_filter(ex.exporter, ex.ifindex, "egress")), w)
+        for app in bulk:
+            mass = _bytes_per_bucket(c.bytes_timeseries(w, _bulk_filter(ex, app)), w)
+            if not any(mass.values()):
+                continue
+            hours = parse_hours(app.profile.get("plage_horaire"))
+            hot: list[str] = []
+            for ts, octets in sorted(mass.items()):
+                bucket_total = max(total.get(ts, 0.0), octets)
+                util = 100 * bucket_total * 8 / w.bucket_seconds / ex.capacity_bps
+                local = datetime.fromtimestamp(ts, zone)
+                allowed = hours is not None and in_hours(local.hour, hours)
+                heavy = 100 * octets / bucket_total >= th["bulk_share_warn_pct"]
+                if not allowed and heavy and util >= th["link_util_warn_pct"]:
+                    hot.append(local.isoformat(timespec="minutes"))
+            when = f"hors de la plage {app.profile.get('plage_horaire')}" if hours else "sans plage autorisée"
+            msg = (
+                f"{len(hot)} bucket(s) {when} où {app.name} pèse au moins {th['bulk_share_warn_pct']:g}% d'une sortie"
+                f" à {th['link_util_warn_pct']:g}% ou plus : shaper local (advise) ou plage à revoir"
+                if hot
+                else f"{app.name} ne pousse pas la sortie en saturation {when}"
+            )
+            out.append(
+                _finding(
+                    p,
+                    "bulk_business_hours",
+                    Severity.WARN if hot else Severity.OK,
+                    f"{site.name}/{ex.name}/{app.name}",
+                    msg,
+                    site=site,
+                    direction="egress",
+                    evidence={"hot_buckets": hot[:20], "hot_count": len(hot), "allowed_hours": hours, "timezone": tz},
+                )
+            )
+    logger.debug("check_bulk_business_hours: retour | {} constat(s)", len(out))
+    return out
+
+
+def check_microbursts(findings: list[Finding], w: Window) -> list[Finding]:
+    """Indice de microburst (#28) : congestion vue en sortie sur une sortie que la saturation au bucket juge saine.
+
+    Des marques ECN CE (``congestion_ecn`` WARN) — ou des drops de file (``congestion_drops`` CRIT) si la source
+    de compteurs les fournit — alors que l'utilisation en sortie reste sous le seuil d'alerte (``saturation``
+    egress OK) indiquent des rafales plus courtes que le bucket : la moyenne du bucket les lisse. Le constat
+    oriente vers un bucket plus court (``--bucket``, borné par le plancher du sampling) ou vers la lecture des
+    compteurs de file, seule mesure qui voit des rafales de quelques millisecondes.
+
+    Args:
+        findings: Constats déjà produits (saturation et congestion).
+        w: Fenêtre d'analyse (taille du bucket).
+
+    Returns:
+        Un constat WARN ``microburst`` par sortie concernée.
+    """
+    logger.debug("check_microbursts: entrée | {} constats, bucket {}", len(findings), w.bucket)
+    calm = {
+        (f.site, f.subject): f
+        for f in findings
+        if f.check == "saturation" and f.direction == "egress" and f.severity is Severity.OK
+    }
+    # Marques de congestion qui signent un pic : ECN CE vu en sortie (WARN) ou drops de file (CRIT).
+    alarm: dict[str, Severity] = {"congestion_ecn": Severity.WARN, "congestion_drops": Severity.CRIT}
+    out: list[Finding] = []
+    for f in findings:
+        min_sev = alarm.get(f.check)
+        if min_sev is None or f.severity < min_sev:
+            continue
+        sat = calm.get((f.site, f.subject))
+        if sat is None:
+            continue
+        p95 = sat.evidence.get("p95_pct", 0.0)
+        out.append(
+            Finding(
+                "microburst",
+                Severity.WARN,
+                f.subject,
+                f"{f.message} alors que l'utilisation reste à p95 {p95:.0f}% par bucket de {w.bucket} : rafales plus"
+                " courtes que le bucket probables ; réduire --bucket (plancher : qos-audit sampling) ou lire les"
+                " compteurs de file",
+                {"congestion": f.evidence, "p95_pct": p95, "bucket": w.bucket},
+                f.site,
+                "egress",
+            )
+        )
+    logger.debug("check_microbursts: retour | {} indice(s)", len(out))
+    return out
+
+
 def run_all(
     c: ElastiflowClient,
     p: Policy,
     w: Window,
     only_site: str | None = None,
     cal: Calibration | None = None,
+    apps: list | None = None,
+    tz: str = "Europe/Paris",
 ) -> list[Finding]:
     """Exécute tous les contrôles.
 
@@ -1298,6 +1457,8 @@ def run_all(
         w: Fenêtre d'analyse.
         only_site: Restreint l'audit à un site.
         cal: Calibration issue de la validation ElastiFlow (optionnelle).
+        apps: Catalogue validé (optionnel) : active ``bulk_business_hours``.
+        tz: Fuseau des plages horaires du catalogue.
 
     Returns:
         Liste des constats.
@@ -1313,9 +1474,12 @@ def run_all(
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
     findings += check_congestion(c, p, w, only_site)
+    findings += check_microbursts(findings, w)
     findings += check_exit_balance(c, p, w, only_site)
     findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
+    if apps:
+        findings += check_bulk_business_hours(c, p, w, apps, only_site, tz)
     if cal is not None:
         findings += check_calibration(p, cal)
         findings += check_sampling_drift(c, p, w, cal)

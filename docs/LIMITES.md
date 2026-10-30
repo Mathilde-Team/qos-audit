@@ -38,7 +38,13 @@ soit ±24 % au lieu de ±10 %.
 ## Autres limites
 
 - **Capacité ≠ vitesse du port.** Un port de 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200. Renseigner `capacity_bps`.
-- **Microbursts** invisibles : buckets d'une minute par défaut (`Window.bucket`).
+- **Microbursts** invisibles : buckets d'une minute par défaut (`audit --bucket`, `Window.bucket`). Un bucket plus court
+  n'aide que s'il reste au-dessus du **plancher du sampling** : la colonne « bucket min s » de `qos-audit sampling` donne
+  la durée pour qu'un lien chargé au seuil `link_util_warn_pct` (70 %) porte `min_samples` (300) échantillons par bucket
+  (`t = min_samples × 8 × S × N / (u × C)`, S = 1500 octets). En repli sur les flux, un bucket sous ce
+  plancher est signalé dans le constat `saturation`. Avec les compteurs d'interface (30 s), un bucket plus court que
+  l'intervalle de compteurs n'est qu'interpolé. Seuls les compteurs de file voient des rafales de quelques
+  millisecondes : des drops sans saturation au bucket donnent le constat `microburst` (indice, pas mesure).
 - **Point de mesure** : le sFlow est pris sur le **site distant**, à l'arrivée (décision du propriétaire, 29/10/2026, issue #31). Le DSCP mesuré est celui reçu après la traversée du réseau opérateur : la question « avant ou après la politique de sortie du Comware » ne se pose pas, et il n'y a pas de champ `dscp_seen` à ajouter. Un écart au contrôle `marking` garde son ambiguïté (mauvais marquage au départ ou remarquage opérateur) — c'est écrit dans le constat.
 - **Tunnels et chiffrement** : après IPsec, GRE ou SD-WAN, seuls l'en-tête externe et son DSCP sont visibles. Les ACL par ports ne s'appliquent plus. Le contrôle `encapsulated` (#30) mesure la part de trafic encapsulé par sortie (protocoles IP 47/50, UDP 500/4500, ports SD-WAN documentés) : majorité = audit non concluant, mesurer avant le tunnel ; `encapsulated_dscp` observe le DSCP externe (la copie du DSCP interne ne se vérifie pas depuis l'extérieur).
 - **Asymétrie et multi-sorties** : l'aller et le retour peuvent emprunter des sorties différentes ; raisonner par site et par sens.
@@ -60,7 +66,9 @@ soit ±24 % au lieu de ±10 %.
 - **Classes de l'opérateur** : D1, D2 et D3 (AF31, AF21, AF11) sont des hypothèses tant que l'opérateur ne les a pas confirmées
   par écrit. « EF 45 » reste ambigu (DSCP 45 ou part de bande).
 - **Pas de classe sous BF chez l'opérateur** : le trafic de masse (sauvegarde) ne peut pas être « abaissé » de bout en bout ;
-  seul un shaper local ou une plage horaire le contient.
+  seul un shaper local ou une plage horaire le contient. `advise` en produit un brouillon (débit par défaut 20 % de la capacité,
+  hypothèse) et `bulk_business_hours` repère la sauvegarde hors plage sur une sortie chargée ; les deux supposent que le
+  catalogue identifie la sauvegarde par protocole et ports.
 - **Marge sur les octets** : 1,25 par défaut sur l'incertitude affichée ; à ajuster d'après les séries B et C de la validation.
 
 ## Ajouts de la session 04
