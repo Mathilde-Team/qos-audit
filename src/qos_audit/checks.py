@@ -202,7 +202,8 @@ def check_capacity(p: Policy, only_site: str | None = None) -> list[Finding]:
     Un port 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200 : sans ``capacity_bps`` réel, utilisation,
     saturation et sampling recommandé sont calculés sur une base fausse. WARN quand ``capacity_bps`` est
     absent (repli sur ``speed_bps``), égal à la vitesse du port (CIR non vérifiée) ou supérieur à elle
-    (incohérent).
+    (incohérent). WARN aussi quand ``capacity_bps_down`` (CIR descendant) est absent : débit montant ≠
+    descendant, le sens entrant est alors mesuré au CIR montant.
 
     Args:
         p: Politique (sites et sorties).
@@ -216,6 +217,10 @@ def check_capacity(p: Policy, only_site: str | None = None) -> list[Finding]:
     for site, ex in _exits(p, only_site):
         subject = f"{ex.exporter}:if{ex.ifindex} ({ex.name})"
         evidence = {"speed_bps": ex.speed_bps, "capacity_bps": ex.capacity_bps}
+        if ex.operator is not None:
+            evidence["operator"] = ex.operator
+        if ex.contract_ref is not None:
+            evidence["contract_ref"] = ex.contract_ref
         if not ex.capacity_declared:
             msg = (
                 "capacity_bps absent : repli sur la vitesse du port, utilisation sous-estimée si la CIR est plus basse"
@@ -225,8 +230,21 @@ def check_capacity(p: Policy, only_site: str | None = None) -> list[Finding]:
         elif ex.capacity_bps > ex.speed_bps:
             msg = "capacity_bps supérieur à la vitesse du port : valeur incohérente"
         else:
-            continue
-        out.append(_finding(p, "capacity", Severity.WARN, subject, msg, site=site, evidence=evidence))
+            msg = ""
+        if msg:
+            out.append(_finding(p, "capacity", Severity.WARN, subject, msg, site=site, evidence=evidence))
+        if not ex.capacity_down_declared:
+            out.append(
+                _finding(
+                    p,
+                    "capacity",
+                    Severity.WARN,
+                    subject,
+                    "capacity_bps_down absent : CIR descendant inconnu, repli sur le montant (débit montant ≠ descendant)",
+                    site=site,
+                    evidence=evidence,
+                )
+            )
     result = out or [
         _finding(p, "capacity", Severity.OK, "sorties", "capacité contractuelle renseignée pour chaque sortie")
     ]
@@ -537,7 +555,7 @@ def check_saturation_and_overflow(
             counters_ok = bool(full)
             if counters_ok:
                 assert rates is not None  # pour le typage : counters_ok le garantit
-                util = {ts: 100 * (rates.bucket_bytes[ts] * 8 / w.bucket_seconds) / ex.capacity_bps for ts in full}
+                util = {ts: 100 * (rates.bucket_bytes[ts] * 8 / w.bucket_seconds) / ex.capacity_for(d) for ts in full}
                 # les échantillons ne comptent que sur les buckets qui fondent le verdict
                 samples = sum(samples_by_ts.get(ts, 0) for ts in full)
                 source = "counters"
@@ -558,7 +576,9 @@ def check_saturation_and_overflow(
                         )
                     )
                     continue
-                util = {ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_bps for ts, v in by_ts.items()}
+                util = {
+                    ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_for(d) for ts, v in by_ts.items()
+                }
                 source = "flows"
                 note = "repli sur les flux échantillonnés (compteurs absents ou insuffisants)"
                 # plancher de bucket (#28) : sous min_samples par bucket, un bucket isolé ne prouve rien
@@ -591,7 +611,7 @@ def check_saturation_and_overflow(
                         "peak_ts": peak_ts,
                         "buckets_over_warn": over_warn,
                         "buckets": len(util),
-                        "capacity_bps": ex.capacity_bps,
+                        "capacity_bps": ex.capacity_for(d),
                         "utilization_source": source,
                         "bucket": w.bucket,
                         **(
@@ -650,7 +670,7 @@ def check_saturation_and_overflow(
                         )
                     )
                     continue
-                budget = ex.capacity_bps * cls.max_share_pct / 100 if cls.max_share_pct is not None else cls.car_bps
+                budget = ex.capacity_for(d) * cls.max_share_pct / 100 if cls.max_share_pct is not None else cls.car_bps
                 if cls.car_bps is not None and cls.max_share_pct is not None:
                     budget = min(budget, cls.car_bps)  # le car configuré est le garant effectif
                 over: list[int] = []
@@ -1081,8 +1101,8 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
     th = p.thresholds
     sp = params_from_thresholds(th)
     for site, ex in _exits(p, only_site):
-        rec = recommended_sampling(ex.capacity_bps, sp)
         for d in _DIRS:
+            rec = recommended_sampling(ex.capacity_for(d), sp)
             rows = c.bytes_by(w, ["in_if", "sampling"], exit_filter(ex.exporter, ex.ifindex, d))
             samples = sum(r["samples"] for r in rows)
             subject = f"{site.name}/{ex.name}"
@@ -1097,14 +1117,19 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                 per_rate[int(r["sampling"])] += r["samples"]
             significant = [rate for rate, n in per_rate.items() if n >= 0.1 * samples] or list(per_rate)
             worst, finest = max(significant), min(significant)
-            err = expected_error_pct(ex.capacity_bps, worst, sp)
+            err = expected_error_pct(ex.capacity_for(d), worst, sp)
             sev = Severity.OK
             if err > th["sampling_error_crit_pct"]:
                 sev = Severity.CRIT
             elif err > th["sampling_error_target_pct"]:
                 sev = Severity.WARN
             msg = f"1:{worst} observé, recommandé 1:{rec} ; erreur au plancher ±{err:.1f}% (cible {th['sampling_error_target_pct']}%)"
-            evidence = {"rates": dict(per_rate), "recommended": rec, "error_pct": err, "capacity_bps": ex.capacity_bps}
+            evidence = {
+                "rates": dict(per_rate),
+                "recommended": rec,
+                "error_pct": err,
+                "capacity_bps": ex.capacity_for(d),
+            }
             if len(significant) > 1:
                 # Taux des ports LAN d'entrée mélangés dans la vue de la sortie (#27) : un échantillonnage en sortie
                 # sur l'interface WAN donne un taux unique, celui que recommande ce contrôle.
@@ -1126,7 +1151,7 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                     evidence=evidence,
                 )
             )
-            cost = worst_case_samples_per_s(ex.capacity_bps, finest, sp.cost_size_bytes)
+            cost = worst_case_samples_per_s(ex.capacity_for(d), finest, sp.cost_size_bytes)
             if cost > th["sampling_max_samples_per_s"]:
                 msg = f"1:{finest} : jusqu'à {cost:.0f} échantillons/s au pire cas (risque CPU / export)"
                 out.append(

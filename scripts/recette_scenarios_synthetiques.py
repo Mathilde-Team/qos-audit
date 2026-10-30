@@ -43,7 +43,10 @@ RECETTE = ROOT / "tests" / "fixtures" / "recette"
 # R6 : liens à 10 Mbit/s — la politique est ajustée comme dans la recette synthétique.
 POL_10M = replace(
     POL,
-    sites=[replace(s, exits=tuple(replace(e, capacity_bps=10_000_000) for e in s.exits)) for s in POL.sites],
+    sites=[
+        replace(s, exits=tuple(replace(e, capacity_bps=10_000_000, capacity_bps_down=10_000_000) for e in s.exits))
+        for s in POL.sites
+    ],
 )
 
 # R4 : 150 % de la capacité contractuelle (200 Mbit/s) offerte en EF, par minute de bucket.

@@ -198,7 +198,10 @@ def test_r5_bascule_sur_le_secours(pol):
 
 def test_r6_sampling_trop_grossier(pol):
     # sorties à 10 Mbit/s
-    pol.sites = [replace(s, exits=tuple(replace(e, capacity_bps=10_000_000) for e in s.exits)) for s in pol.sites]
+    pol.sites = [
+        replace(s, exits=tuple(replace(e, capacity_bps=10_000_000, capacity_bps_down=10_000_000) for e in s.exits))
+        for s in pol.sites
+    ]
     rows = [{"in_if": 10, "sampling": 4096, "bytes": 1e6, "samples": 900}]
     lab = Lab({(("in_if", "sampling"), "rtr-a-01", 49, d): rows for d in ("egress", "ingress")})
     res = {(f.subject, f.direction): f for f in check_sampling_adequacy(lab, pol, W)}

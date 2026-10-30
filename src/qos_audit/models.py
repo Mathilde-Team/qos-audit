@@ -148,6 +148,22 @@ class Exit:
     role: str = "principal"
     # False quand capacity_bps manquait dans la politique et vaut speed_bps par repli (contrôle `capacity`, #13).
     capacity_declared: bool = True
+    # Relevé de contrat (#13) : opérateur, référence du lien, débit crête (EIR).
+    operator: str | None = None
+    contract_ref: str | None = None
+    peak_bps: int | None = None
+    # CIR descendant — débit montant ≠ descendant ; None : repli sur capacity_bps (contrôle `capacity`, #13).
+    capacity_bps_down: int | None = None
+    capacity_down_declared: bool = False
+
+    def capacity_for(self, direction: str) -> int:
+        """CIR du sens demandé : « egress » = montant, « ingress » = descendant (repli : capacity_bps)."""
+        logger.debug("capacity_for: entrée | {} sens={}", self.name, direction)
+        if direction == "ingress" and self.capacity_bps_down is not None:
+            logger.debug("capacity_for: sortie | descendant {}", self.capacity_bps_down)
+            return self.capacity_bps_down
+        logger.debug("capacity_for: sortie | repli montant {}", self.capacity_bps)
+        return self.capacity_bps
 
 
 @dataclass(frozen=True)

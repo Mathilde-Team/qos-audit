@@ -8,6 +8,9 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 ## [Non publié]
 
 ### Ajouté
+- CIR par sens (#13) : `capacity_bps_down` (CIR descendant, débit montant ≠ descendant) dans la politique, utilisé par
+  saturation, débordement de classe et sampling du sens entrant (repli sur `capacity_bps` si absent, WARN du contrôle
+  `capacity`) ; relevé de contrat par sortie : `operator`, `contract_ref`, `peak_bps` (informatifs, dans l'évidence).
 - Authentification et TLS vers OpenSearch (#17) : `ElastiflowClient` accepte `username`/`password`
   (authentification basique) et `verify_certs`/`ca_certs` ; la CLI lit `$QOS_AUDIT_OS_USER`/`$QOS_AUDIT_OS_PASSWORD`
   et propose `--os-user`, `--os-ca-certs`, `--os-insecure`. Identifiants hors du dépôt.
