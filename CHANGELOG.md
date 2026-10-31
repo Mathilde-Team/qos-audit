@@ -7,6 +7,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+## [0.1.0] - 2026-10-31
+
+Première version publiée : la politique QoS théorique (extraite des configurations Comware) est confrontée au marquage
+mesuré en sFlow par ElastiFlow, site par site, sortie par sortie, sens par sens.
+
 ### Ajouté
 - CIR par sens (#13) : `capacity_bps_down` (CIR descendant, débit montant ≠ descendant) dans la politique, utilisé par
   saturation, débordement de classe et sampling du sens entrant (repli sur `capacity_bps` si absent, WARN du contrôle
