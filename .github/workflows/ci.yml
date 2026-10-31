@@ -33,12 +33,13 @@ jobs:
       - name: Installation de Python
         run: uv python install 3.11
 
-      # ruff figé à la version du .pre-commit-config.yaml du dépôt (v0.6.9) ;
+      # ruff figé à la même version que pyproject.toml (groupe dev, `make lint`) et
+      # .pre-commit-config.yaml (v0.17.2) : les trois montent ensemble (#75) ;
       # la ligne de 120 caractères est celle de [tool.ruff] du pyproject.toml.
       - name: Lint et format (ruff)
         run: |
-          uvx ruff@0.6.9 check --line-length 120 .
-          uvx ruff@0.6.9 format --check --line-length 120 .
+          uvx ruff@0.17.2 check --line-length 120 .
+          uvx ruff@0.17.2 format --check --line-length 120 .
 
       # Le paquet est installé en éditable : disposition src/ sans build-system
       # déclaré, les dépendances de test (pytest, pytest-cov) restent éphémères,

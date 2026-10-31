@@ -23,6 +23,7 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "overflow_min_buckets": 3,
     "unknown_dscp_max_pct": 1,
     "secours_active_max_pct": 5,
+    "bulk_share_warn_pct": 20,
     "bytes_error_margin": 1.25,
     "sampling_floor_ratio": 0.05,
     "sampling_window_s": 300,
@@ -50,27 +51,59 @@ def parse_ports(spec: str | int | None) -> tuple[int, int] | None:
     Returns:
         Tuple (min, max) ou ``None``.
     """
+    logger.debug("parse_ports: entrée | spec={}", spec)
     if spec is None or spec == "":
+        logger.debug("parse_ports: sortie | vide")
         return None
     lo, _, hi = str(spec).partition("-")
-    return int(lo), int(hi or lo)
+    res = int(lo), int(hi or lo)
+    logger.debug("parse_ports: sortie | {}", res)
+    return res
 
 
 def _load_exit(raw: dict) -> Exit:
+    """Construit une sortie WAN depuis la politique YAML.
+
+    Sans ``capacity_bps``, la capacité retombe sur ``speed_bps`` et la sortie est marquée
+    ``capacity_declared=False`` : le contrôle ``capacity`` (#13) le signale dans le rapport.
+    ``capacity_bps_down`` (CIR descendant, débit montant ≠ descendant) suit la même règle ;
+    ``operator``, ``contract_ref`` et ``peak_bps`` sont le relevé de contrat, informatifs.
+
+    Args:
+        raw: Entrée ``exits`` d'un site.
+
+    Returns:
+        La sortie.
+    """
+    logger.debug("_load_exit: entrée | {}", raw.get("name"))
     capacity = raw.get("capacity_bps")
-    if capacity is None:
+    declared = capacity is not None
+    if not declared:
         logger.warning(
             "Sortie {}: capacity_bps absent, repli sur speed_bps (utilisation sous-estimée si CIR < port)", raw["name"]
         )
         capacity = raw["speed_bps"]
-    return Exit(
+    down = raw.get("capacity_bps_down")
+    if down is None:
+        logger.warning(
+            "Sortie {}: capacity_bps_down absent, repli sur capacity_bps (CIR descendant inconnu)", raw["name"]
+        )
+    ex = Exit(
         name=raw["name"],
         exporter=raw["exporter"],
         ifindex=int(raw["ifindex"]),
         speed_bps=int(raw["speed_bps"]),
         capacity_bps=int(capacity),
         role=raw.get("role", "principal"),
+        capacity_declared=declared,
+        operator=raw.get("operator"),
+        contract_ref=raw.get("contract_ref"),
+        peak_bps=int(raw["peak_bps"]) if raw.get("peak_bps") is not None else None,
+        capacity_bps_down=int(down) if down is not None else None,
+        capacity_down_declared=down is not None,
     )
+    logger.debug("_load_exit: sortie | {} capacity_bps={} déclarée={}", ex.name, ex.capacity_bps, declared)
+    return ex
 
 
 def load_policy(path: Path) -> Policy:
@@ -82,6 +115,7 @@ def load_policy(path: Path) -> Policy:
     Returns:
         La politique typée.
     """
+    logger.debug("load_policy: entrée | {}", path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     classes = [
         QosClass(
@@ -89,6 +123,7 @@ def load_policy(path: Path) -> Policy:
             dscp=frozenset(c["dscp"]),
             priority=c["priority"],
             max_share_pct=c.get("max_share_pct"),
+            car_bps=c.get("car_bps"),
             dscp_confirmed=c.get("dscp_confirmed", True),
             match=tuple(
                 FlowMatch(
@@ -118,6 +153,7 @@ def load_policy(path: Path) -> Policy:
     for s in sites:
         if not 1 <= len(s.exits) <= 4:
             logger.warning("Site {}: {} sortie(s) (attendu 1 à 4)", s.name, len(s.exits))
+    logger.debug("load_policy: sortie | {} classe(s), {} site(s)", len(classes), len(sites))
     return Policy(
         classes=classes,
         untrusted=trust.get("untrusted", []),

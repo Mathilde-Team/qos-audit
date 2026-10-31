@@ -1,0 +1,663 @@
+[
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan1/ef",
+    "message": "10.0% conforme — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='udp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(16384, 32767), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan1/d1",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='udp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(5060, 5060), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan1/d1",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='tcp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(5060, 5061), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan1/d2",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='tcp', src_cidr=None, dst_cidr='10.20.0.0/16', src_ports=None, dst_ports=(443, 443), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan2/ef",
+    "message": "10.0% conforme — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='udp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(16384, 32767), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan2/d1",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='udp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(5060, 5060), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan2/d1",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='tcp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(5060, 5061), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "marking",
+    "severity": "CRIT",
+    "subject": "site-a/wan2/d2",
+    "message": "0.0% conforme (DSCP à confirmer auprès de l'opérateur) — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)",
+    "evidence": {
+      "dscp_seen": [
+        {
+          "dscp": 0,
+          "bytes": 9000000.0,
+          "samples": 600
+        },
+        {
+          "dscp": 46,
+          "bytes": 1000000.0,
+          "samples": 100
+        }
+      ],
+      "match": "FlowMatch(protocol='tcp', src_cidr=None, dst_cidr='10.20.0.0/16', src_ports=None, dst_ports=(443, 443), excludes=())"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "dscp_plan",
+    "severity": "OK",
+    "subject": "site-a/wan1",
+    "message": "0.00% d'octets en DSCP hors plan",
+    "evidence": {
+      "unknown": []
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "dscp_plan",
+    "severity": "OK",
+    "subject": "site-a/wan1",
+    "message": "0.00% d'octets en DSCP hors plan",
+    "evidence": {
+      "unknown": []
+    },
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "dscp_plan",
+    "severity": "OK",
+    "subject": "site-a/wan2",
+    "message": "0.00% d'octets en DSCP hors plan",
+    "evidence": {
+      "unknown": []
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "dscp_plan",
+    "severity": "OK",
+    "subject": "site-a/wan2",
+    "message": "0.00% d'octets en DSCP hors plan",
+    "evidence": {
+      "unknown": []
+    },
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "trust",
+    "severity": "CRIT",
+    "subject": "sw-acc-01:if10",
+    "message": "DSCP 46 accepté en entrée",
+    "evidence": {
+      "dscp": 46,
+      "bytes": 1000000.0,
+      "samples": 100
+    },
+    "site": null,
+    "direction": null,
+    "samples": 100,
+    "rel_error_pct": 24.5
+  },
+  {
+    "check": "class_share",
+    "severity": "OK",
+    "subject": "site-a/wan1/ef",
+    "message": "10.0% du trafic (budget 45%)",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "class_share",
+    "severity": "OK",
+    "subject": "site-a/wan1/ef",
+    "message": "10.0% du trafic (budget 45%)",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "class_share",
+    "severity": "OK",
+    "subject": "site-a/wan2/ef",
+    "message": "10.0% du trafic (budget 45%)",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "class_share",
+    "severity": "OK",
+    "subject": "site-a/wan2/ef",
+    "message": "10.0% du trafic (budget 45%)",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "port_range",
+    "severity": "WARN",
+    "subject": "site-a/wan1/ef",
+    "message": "plage udp 16384-32767 sans IP : 100.0 % des octets ef en paquets > 300 o (pas de la voix) ; restreindre la classe aux IP des IPBX / passerelles (aucune IP voix vue)",
+    "evidence": {
+      "match": "FlowMatch(protocol='udp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(16384, 32767), excludes=())",
+      "non_voice_pct": 100.0,
+      "voice_ips": [],
+      "ip_field": "dst_ip"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "port_range",
+    "severity": "WARN",
+    "subject": "site-a/wan2/ef",
+    "message": "plage udp 16384-32767 sans IP : 100.0 % des octets ef en paquets > 300 o (pas de la voix) ; restreindre la classe aux IP des IPBX / passerelles (aucune IP voix vue)",
+    "evidence": {
+      "match": "FlowMatch(protocol='udp', src_cidr=None, dst_cidr=None, src_ports=None, dst_ports=(16384, 32767), excludes=())",
+      "non_voice_pct": 100.0,
+      "voice_ips": [],
+      "ip_field": "dst_ip"
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "saturation",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "0 échantillons : insuffisant",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 0,
+    "rel_error_pct": Infinity
+  },
+  {
+    "check": "saturation",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "0 échantillons : insuffisant",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 0,
+    "rel_error_pct": Infinity
+  },
+  {
+    "check": "saturation",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "0 échantillons : insuffisant",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 0,
+    "rel_error_pct": Infinity
+  },
+  {
+    "check": "saturation",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "0 échantillons : insuffisant",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 0,
+    "rel_error_pct": Infinity
+  },
+  {
+    "check": "congestion_ecn",
+    "severity": "OK",
+    "subject": "site-a/wan1",
+    "message": "ECN CE = 0.00%",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 0,
+    "rel_error_pct": Infinity
+  },
+  {
+    "check": "congestion_ecn",
+    "severity": "OK",
+    "subject": "site-a/wan2",
+    "message": "ECN CE = 0.00%",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 0,
+    "rel_error_pct": Infinity
+  },
+  {
+    "check": "exit_balance",
+    "severity": "WARN",
+    "subject": "site-a/wan2",
+    "message": "sortie de secours : 50.0% du trafic",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "100.0% du trafic est encapsulé (IPsec/GRE/SD-WAN) : audit de classes non concluant, mesurer avant le tunnel",
+    "evidence": {
+      "tunnel_bytes": 10000000.0,
+      "total_bytes": 10000000.0,
+      "share_pct": 100.0
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated_dscp",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "DSCP externe du trafic encapsulé : 90.0% par défaut, 10.0% marqué — copie du DSCP interne non vérifiable depuis l'en-tête externe, contrôler la configuration du tunnel (classification avant encapsulation / pre-classify, recopie ou marquage statique)",
+    "evidence": {
+      "default_dscp_share_pct": 90.0,
+      "marked_dscp_share_pct": 10.0,
+      "tunnel_bytes": 10000000.0
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "100.0% du trafic est encapsulé (IPsec/GRE/SD-WAN) : audit de classes non concluant, mesurer avant le tunnel",
+    "evidence": {
+      "tunnel_bytes": 10000000.0,
+      "total_bytes": 10000000.0,
+      "share_pct": 100.0
+    },
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated_dscp",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "DSCP externe du trafic encapsulé : 90.0% par défaut, 10.0% marqué — copie du DSCP interne non vérifiable depuis l'en-tête externe, contrôler la configuration du tunnel (classification avant encapsulation / pre-classify, recopie ou marquage statique)",
+    "evidence": {
+      "default_dscp_share_pct": 90.0,
+      "marked_dscp_share_pct": 10.0,
+      "tunnel_bytes": 10000000.0
+    },
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "100.0% du trafic est encapsulé (IPsec/GRE/SD-WAN) : audit de classes non concluant, mesurer avant le tunnel",
+    "evidence": {
+      "tunnel_bytes": 10000000.0,
+      "total_bytes": 10000000.0,
+      "share_pct": 100.0
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated_dscp",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "DSCP externe du trafic encapsulé : 90.0% par défaut, 10.0% marqué — copie du DSCP interne non vérifiable depuis l'en-tête externe, contrôler la configuration du tunnel (classification avant encapsulation / pre-classify, recopie ou marquage statique)",
+    "evidence": {
+      "default_dscp_share_pct": 90.0,
+      "marked_dscp_share_pct": 10.0,
+      "tunnel_bytes": 10000000.0
+    },
+    "site": "site-a",
+    "direction": "egress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "100.0% du trafic est encapsulé (IPsec/GRE/SD-WAN) : audit de classes non concluant, mesurer avant le tunnel",
+    "evidence": {
+      "tunnel_bytes": 10000000.0,
+      "total_bytes": 10000000.0,
+      "share_pct": 100.0
+    },
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "encapsulated_dscp",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "DSCP externe du trafic encapsulé : 90.0% par défaut, 10.0% marqué — copie du DSCP interne non vérifiable depuis l'en-tête externe, contrôler la configuration du tunnel (classification avant encapsulation / pre-classify, recopie ou marquage statique)",
+    "evidence": {
+      "default_dscp_share_pct": 90.0,
+      "marked_dscp_share_pct": 10.0,
+      "tunnel_bytes": 10000000.0
+    },
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": 700,
+    "rel_error_pct": 9.260129588726068
+  },
+  {
+    "check": "sampling_adequacy",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "aucun enregistrement : exporteur muet ou champs à vérifier",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "sampling_adequacy",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan1",
+    "message": "aucun enregistrement : exporteur muet ou champs à vérifier",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "sampling_adequacy",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "aucun enregistrement : exporteur muet ou champs à vérifier",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "egress",
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "sampling_adequacy",
+    "severity": "INCONCLUSIVE",
+    "subject": "site-a/wan2",
+    "message": "aucun enregistrement : exporteur muet ou champs à vérifier",
+    "evidence": {},
+    "site": "site-a",
+    "direction": "ingress",
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "calibration",
+    "severity": "WARN",
+    "subject": "elastiflow",
+    "message": "facteur d'échantillonnage non validé (P6) : volumes potentiellement faux d'un facteur N",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "calibration",
+    "severity": "WARN",
+    "subject": "elastiflow",
+    "message": "calibration jamais validée (VAL-ELASTIFLOW-001 non signé)",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "calibration",
+    "severity": "WARN",
+    "subject": "rtr-a-01",
+    "message": "périmètre renseigné mais jamais validé (date absente)",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "calibration",
+    "severity": "WARN",
+    "subject": "rtr-a-02",
+    "message": "aucun périmètre validé (modèle ?, firmware ?)",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "sampling_drift",
+    "severity": "INCONCLUSIVE",
+    "subject": "rtr-a-01:if49",
+    "message": "aucun échantillon reçu",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "sampling_drift",
+    "severity": "INCONCLUSIVE",
+    "subject": "rtr-a-01:if10",
+    "message": "aucun échantillon reçu",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  },
+  {
+    "check": "sampling_drift",
+    "severity": "INCONCLUSIVE",
+    "subject": "rtr-a-02:if49",
+    "message": "aucun échantillon reçu",
+    "evidence": {},
+    "site": null,
+    "direction": null,
+    "samples": null,
+    "rel_error_pct": null
+  }
+]

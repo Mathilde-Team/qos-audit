@@ -42,10 +42,13 @@ trust:                         # frontière de confiance : ces ports ne doivent 
   allowed_dscp_from_untrusted: [0]
 
 sites:                         # N sites, 1 à 4 sorties sFlow chacun
+  # Relevé de contrat par sortie (#13) : operator (opérateur), contract_ref (référence du lien),
+  # capacity_bps (CIR montant), capacity_bps_down (CIR descendant — débit montant ≠ descendant),
+  # peak_bps (débit crête EIR) : à remplir d'après les contrats réels.
   - name: site-a
     exits:
-      - {name: wan1, exporter: rtr-a-01, ifindex: 49, speed_bps: 1000000000, capacity_bps: 200000000, role: principal}
-      - {name: wan2, exporter: rtr-a-02, ifindex: 49, speed_bps: 100000000, capacity_bps: 50000000, role: secours}
+      - {name: wan1, exporter: rtr-a-01, ifindex: 49, speed_bps: 1000000000, capacity_bps: 200000000, capacity_bps_down: 500000000, peak_bps: 300000000, operator: "opérateur A", contract_ref: "LIAISON-0001", role: principal}
+      - {name: wan2, exporter: rtr-a-02, ifindex: 49, speed_bps: 100000000, capacity_bps: 50000000, capacity_bps_down: 50000000, operator: "opérateur A", contract_ref: "LIAISON-0002", role: secours}
 
 # Seuils : toute clé absente prend la valeur de policy.DEFAULT_THRESHOLDS.
 thresholds:
@@ -57,6 +60,7 @@ thresholds:
   overflow_min_buckets: 3
   unknown_dscp_max_pct: 1
   secours_active_max_pct: 5
+  bulk_share_warn_pct: 20      # part d'un bucket chargé portée par la sauvegarde hors plage (bulk_business_hours)
   bytes_error_margin: 1.25     # facteur sur l'erreur pour des octets de tailles variables (trafic réel)
   encapsulated_inconclusive_pct: 50        # part du trafic encapsulé au-delà : audit non concluant (#30)
   sampling_floor_ratio: 0.05   # plancher à mesurer : 5 % de la capacité de la sortie

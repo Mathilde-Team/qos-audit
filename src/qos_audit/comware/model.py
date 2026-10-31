@@ -58,7 +58,9 @@ class Acl:
     @property
     def label(self) -> str:
         """Identifiant lisible."""
-        return f"{self.kind} {self.name or self.number}"
+        lbl = f"{self.kind} {self.name or self.number}"
+        logger.debug("Acl.label: sortie | {}", lbl)
+        return lbl
 
 
 @dataclass
@@ -77,15 +79,21 @@ class Behavior:
     name: str
     remark_dscp: int | None = None
     remark_precedence: int | None = None
+    car_cir_bps: int | None = None  # ``car cir <kbps>`` : débit garanti (kbps -> bps)
+    car_pct: float | None = None  # ``car cir percent <p>`` : part de la référence
+    queue_bps: int | None = None  # ``queue bandwidth <kbps>``
+    queue_pct: float | None = None  # ``queue bandwidth percent <p>``
     other: list[str] = field(default_factory=list)
 
     @property
     def dscp(self) -> int | None:
         """DSCP imposé (``remark dscp`` ou ``remark ip-precedence`` converti)."""
+        logger.debug("Behavior.dscp: entrée | remark_dscp={}", self.remark_dscp)
         if self.remark_dscp is not None:
+            logger.debug("Behavior.dscp: sortie | {}", self.remark_dscp)
             return self.remark_dscp
         value = None if self.remark_precedence is None else self.remark_precedence * 8
-        logger.debug("Behavior.dscp: {} -> {}", self.name, value)
+        logger.debug("Behavior.dscp: sortie | {} -> {}", self.name, value)
         return value
 
 
@@ -113,6 +121,7 @@ class InterfaceQos:
     applied: list[tuple[str, str]] = field(default_factory=list)  # (policy, inbound|outbound)
     trust: str | None = None
     priority: str | None = None
+    access_vlans: list[int] = field(default_factory=list)  # ``port access vlan <n>``
 
 
 @dataclass
@@ -130,4 +139,5 @@ class DeviceQos:
     interfaces: dict[str, InterfaceQos] = field(default_factory=dict)
     global_apps: list[tuple[str, str]] = field(default_factory=list)
     vlan_apps: list[tuple[str, str, str]] = field(default_factory=list)  # (policy, direction, vlans)
+    map_tables: dict[str, str] = field(default_factory=dict)  # ``qos map-table <nom> <type>``
     issues: list[Issue] = field(default_factory=list)

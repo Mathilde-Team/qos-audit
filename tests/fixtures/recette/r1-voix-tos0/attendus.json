@@ -1,0 +1,9 @@
+{
+  "attendus": [
+    {"check": "marking", "subject": "site-a/wan1/ef", "direction": "egress", "severity": "CRIT", "message_contains": "5.0% conforme"}
+  ],
+  "interdits": [
+    {"check": "trust", "severity": "CRIT"},
+    {"check": "saturation", "severity": "CRIT"}
+  ]
+}

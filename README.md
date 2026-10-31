@@ -5,6 +5,10 @@ de l'opérateur) est confrontée aux **mesures sFlow** collectées par ElastiFlo
 Une **extraction** produit la politique théorique depuis les configurations Comware. Un moteur de **recommandation** propose des reclassements et génère un brouillon de configuration Comware.
 Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fiabilise l'instrument de mesure.
 
+**Périmètre.** Les Comware ne font que marquer ; la priorisation est faite par les routeurs de l'opérateur, hors d'accès.
+Le sFlow est pris sur le site distant : l'outil compare le marquage des paquets à l'arrivée à la QoS théorique. Il ne
+mesure ni files, ni drops, ni qualité vécue (voir `docs/LIMITES.md`).
+
 ## Commandes
 
 | Commande | Rôle |
@@ -14,6 +18,7 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
 | `qos-audit compare` | Compare deux rapports d'audit (avant/après un changement). |
 | `qos-audit sampling` | Calcule le sampling recommandé par débit de lien ou par sortie, et l'erreur attendue. |
 | `qos-audit extract` | Extrait la QoS théorique (ACL + marquage) des configurations Comware : `policy.extracted.yaml` et rapport. |
+| `qos-audit ifindex-map` | Interroge les exporteurs en SNMP v2c (`ifDescr` ou `ifName`) et écrit le CSV `exporter,ifindex,name` de `extract --ifindex-map`. |
 
 ## Démarrage
 
@@ -29,17 +34,16 @@ Une **calibration** issue de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) fia
     # une politique par site (policy.<site>.yaml), puis audit de chaque site avec sa politique
     qos-audit extract --cfg configs/ --base-policy policies/policy.example.yaml --per-site --out qos_extract/
     qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 [--site site-a]
-    # drops par file en SSH Comware (issue #10) : « uv sync --extra comware », identifiants par
-    # QOS_AUDIT_SSH_USER / QOS_AUDIT_SSH_PASSWORD (jamais journalisés), CSV des sorties d'extract.
-    # Les drops ne se mesurent qu'entre deux exécutions encadrant la fenêtre (cf. docs/LIMITES.md).
-    qos-audit audit  --policy qos_extract/ --opensearch http://es:9200 --minutes 60 \
-                     --comware-drops etat-drops.json --comware-interfaces configs/ifindex.csv
+
+OpenSearch peut exiger une authentification et TLS (#17) : `--os-user` (ou `$QOS_AUDIT_OS_USER`) et
+`$QOS_AUDIT_OS_PASSWORD` (jamais en argument de ligne de commande, pour l'historique de shell), avec
+`--os-ca-certs` (bundle CA) ou `--os-insecure` (dépannage, désactive la vérification du certificat).
 
 ## Avant la première exécution
 
 1. Dérouler la phase 0 de la validation d'ElastiFlow et renseigner `calibration.yaml` (champs, facteur d'échantillonnage,
    base de comptage, délai d'ingestion). Tant qu'il est incomplet, l'audit le signale.
-2. Renseigner `capacity_bps` (débit contractuel) pour chaque sortie : l'utilisation et le sampling se calculent sur la capacité.
+2. Renseigner `capacity_bps` (CIR montant) et `capacity_bps_down` (CIR descendant — débit montant ≠ descendant) pour chaque sortie, avec le relevé de contrat (`operator`, `contract_ref`, `peak_bps`) : l'utilisation, la saturation et le sampling se calculent sur la capacité du sens mesuré. Le contrôle `capacity` signale une sortie sans capacité, dont la capacité vaut la vitesse du port, ou sans CIR descendant (#13).
 3. Confirmer auprès de l'opérateur la correspondance des classes D1, D2 et D3 (`dscp_confirmed: false` dans l'exemple).
 4. Lire `docs/LIMITES.md` : sFlow est statistique et ne voit ni les files ni les drops.
 

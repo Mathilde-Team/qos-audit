@@ -1,4 +1,1 @@
-# Référence des sorties de fonctions sans logger.debug juste avant (SOCLE §8,
-# issue #6). Ne doit pas augmenter : le baisser après avoir instrumenté des
-# fonctions (chaque PR de code doit reprendre la mécanique).
-82
+28

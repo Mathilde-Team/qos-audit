@@ -7,14 +7,18 @@ adéquation du sampling, santé de la calibration.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from datetime import date, datetime
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
 from qos_audit.calibration import Calibration, ExporterCal, Validation
-from qos_audit.counters import CounterSource, InterfaceRates, NullCounters, rates_from_counters
+from qos_audit.counters import InterfaceRates, rates_from_counters
 from qos_audit.elastiflow import FIELDS, ElastiflowClient, Window, exit_filter
+from qos_audit.hours import in_hours, parse_hours
 from qos_audit.models import (
     Direction,
     Exit,
@@ -24,6 +28,7 @@ from qos_audit.models import (
     QosClass,
     Severity,
     Site,
+    combined_error_pct,
     rel_error_pct,
     wide_port_range,
 )
@@ -36,6 +41,7 @@ from qos_audit.sampling import (
 
 __all__ = [
     "check_calibration",
+    "check_capacity",
     "check_counter_consistency",
     "check_encapsulated_traffic",
     "match_filter",
@@ -51,6 +57,9 @@ def match_filter(m: FlowMatch) -> dict:
     Les exclusions (``deny`` précédents, issue #21) deviennent des clauses
     ``must_not`` : le trafic rejeté par l'ACL ne compte pas dans le match.
     """
+    logger.debug(
+        "match_filter: entrée | proto={} ports_dst={} excl={}", bool(m.protocol), bool(m.dst_ports), len(m.excludes)
+    )
     f: list[dict] = []
     if m.protocol:
         f.append({"term": {FIELDS["proto"]: m.protocol}})
@@ -65,10 +74,12 @@ def match_filter(m: FlowMatch) -> dict:
     body: dict = {"filter": f}
     if m.excludes:
         body["must_not"] = [match_filter(e) for e in m.excludes]
+    logger.debug("match_filter: sortie | {} clause(s), {} exclusion(s)", len(f), len(m.excludes))
     return {"bool": body}
 
 
 def _and(*clauses: dict) -> dict:
+    logger.debug("_and: sortie | {} clause(s)", len(clauses))
     return {"bool": {"filter": list(clauses)}}
 
 
@@ -83,20 +94,50 @@ def _finding(
     direction: str | None = None,
     samples: int | None = None,
     evidence: dict | None = None,
+    combined: tuple[float, float] | None = None,
 ) -> Finding:
-    err = rel_error_pct(samples, p.thresholds.get("bytes_error_margin", 1.0)) if samples is not None else None
-    return Finding(check, sev, subject, msg, evidence or {}, site.name if site else None, direction, samples, err)
+    """Constat ; ``combined`` (erreur, n effectif) remplace la borne 196/√n × marge quand il est mesuré (#27)."""
+    logger.debug("_finding: entrée | {} {} {}", check, sev.name, subject)
+    if combined is not None:
+        err: float | None = combined[0]
+        evidence = {**(evidence or {}), "effective_samples": round(combined[1], 1)}
+    else:
+        err = rel_error_pct(samples, p.thresholds.get("bytes_error_margin", 1.0)) if samples is not None else None
+    f = Finding(check, sev, subject, msg, evidence or {}, site.name if site else None, direction, samples, err)
+    logger.debug("_finding: sortie | erreur={}", err)
+    return f
+
+
+def _combined(rows: list[dict]) -> tuple[float, float] | None:
+    """Incertitude combinée d'un ensemble de lignes ``bytes_by`` (#27), ou ``None`` si elle n'est pas mesurable.
+
+    Mesurable quand chaque ligne porte ``bytes_sq`` et que les lignes totalisent des octets ; sinon l'appelant garde
+    la borne 196/√n × marge.
+    """
+    logger.debug("_combined: entrée | {} ligne(s)", len(rows))
+    if not rows or any("bytes_sq" not in r for r in rows):
+        logger.debug("_combined: sortie | non mesurable (bytes_sq absent)")
+        return None
+    err, n_eff = combined_error_pct(sum(r["bytes"] for r in rows), sum(r["bytes_sq"] for r in rows))
+    result = (err, n_eff) if n_eff > 0 else None
+    logger.debug("_combined: sortie | {}", result)
+    return result
 
 
 def _enough(samples: int, p: Policy) -> bool:
+    logger.debug("_enough: sortie | {} >= {}", samples, p.thresholds["min_samples"])
     return samples >= p.thresholds["min_samples"]
 
 
 def _p95(values: list[float]) -> float:
+    logger.debug("_p95: entrée | {} valeur(s)", len(values))
     if not values:
+        logger.debug("_p95: sortie (vide) | 0.0")
         return 0.0
     s = sorted(values)
-    return s[min(len(s) - 1, int(0.95 * len(s)))]
+    v = s[min(len(s) - 1, int(0.95 * len(s)))]
+    logger.debug("_p95: sortie | {}", v)
+    return v
 
 
 def _bucket_key(ts: str, w: Window) -> int | None:
@@ -138,6 +179,7 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
         samples = c.counter_samples(ex.exporter, ex.ifindex, w)
     except Exception as exc:  # noqa: BLE001 — indisponibilité des compteurs : repli signalé sur les flux
         logger.warning("Compteurs indisponibles pour {}:if{} ({}): repli sur les flux", ex.exporter, ex.ifindex, exc)
+        logger.debug("_exit_rates: sortie | compteur indisponible (repli flux)")
         return None
     rates = rates_from_counters(samples, w, d)
     logger.debug("_exit_rates: sortie | usable={}", rates.usable)
@@ -145,15 +187,74 @@ def _exit_rates(c: ElastiflowClient, ex: Exit, w: Window, d: str) -> InterfaceRa
 
 
 def _exits(p: Policy, only_site: str | None):
+    logger.debug("_exits: entrée | sites={} filtre_site={}", len(p.sites), only_site)
     for site in p.sites:
         if only_site and site.name != only_site:
             continue
         for ex in site.exits:
             yield site, ex
+    logger.debug("_exits: sortie (itération terminée)")
+
+
+def check_capacity(p: Policy, only_site: str | None = None) -> list[Finding]:
+    """Capacité contractuelle déclarée pour chaque sortie (#13) : capacité ≠ vitesse du port.
+
+    Un port 1 Gbit/s avec une CIR de 200 Mbit/s sature à 200 : sans ``capacity_bps`` réel, utilisation,
+    saturation et sampling recommandé sont calculés sur une base fausse. WARN quand ``capacity_bps`` est
+    absent (repli sur ``speed_bps``), égal à la vitesse du port (CIR non vérifiée) ou supérieur à elle
+    (incohérent). WARN aussi quand ``capacity_bps_down`` (CIR descendant) est absent : débit montant ≠
+    descendant, le sens entrant est alors mesuré au CIR montant.
+
+    Args:
+        p: Politique (sites et sorties).
+        only_site: Restreint le contrôle à un site.
+
+    Returns:
+        Un constat WARN par sortie douteuse, ou un constat OK unique.
+    """
+    logger.debug("check_capacity: entrée | site={}", only_site)
+    out: list[Finding] = []
+    for site, ex in _exits(p, only_site):
+        subject = f"{ex.exporter}:if{ex.ifindex} ({ex.name})"
+        evidence = {"speed_bps": ex.speed_bps, "capacity_bps": ex.capacity_bps}
+        if ex.operator is not None:
+            evidence["operator"] = ex.operator
+        if ex.contract_ref is not None:
+            evidence["contract_ref"] = ex.contract_ref
+        if not ex.capacity_declared:
+            msg = (
+                "capacity_bps absent : repli sur la vitesse du port, utilisation sous-estimée si la CIR est plus basse"
+            )
+        elif ex.capacity_bps == ex.speed_bps:
+            msg = "capacity_bps égal à la vitesse du port : CIR du contrat à confirmer (débit montant ≠ descendant)"
+        elif ex.capacity_bps > ex.speed_bps:
+            msg = "capacity_bps supérieur à la vitesse du port : valeur incohérente"
+        else:
+            msg = ""
+        if msg:
+            out.append(_finding(p, "capacity", Severity.WARN, subject, msg, site=site, evidence=evidence))
+        if not ex.capacity_down_declared:
+            out.append(
+                _finding(
+                    p,
+                    "capacity",
+                    Severity.WARN,
+                    subject,
+                    "capacity_bps_down absent : CIR descendant inconnu, repli sur le montant (débit montant ≠ descendant)",
+                    site=site,
+                    evidence=evidence,
+                )
+            )
+    result = out or [
+        _finding(p, "capacity", Severity.OK, "sorties", "capacité contractuelle renseignée pour chaque sortie")
+    ]
+    logger.debug("check_capacity: sortie | {} constat(s)", len(result))
+    return result
 
 
 def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Par site/sortie/classe : % d'octets sortants matchant les ACL théoriques qui portent un DSCP attendu."""
+    logger.debug("check_marking_conformity: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
         base = exit_filter(ex.exporter, ex.ifindex, Direction.EGRESS.value)
@@ -180,25 +281,37 @@ def check_marking_conformity(c: ElastiflowClient, p: Policy, w: Window, only_sit
                 ok = sum(r["bytes"] for r in rows if r["dscp"] in cls.dscp)
                 pct = 100 * ok / total if total else 0.0
                 sev = Severity.OK if pct >= p.thresholds["conformity_min_pct"] else Severity.CRIT
+                message = f"{pct:.1f}% conforme"
+                if sev == Severity.CRIT:
+                    # #31 : le sFlow est pris sur le site distant, à l'arrivée —
+                    # un écart peut être un mauvais marquage au départ OU un
+                    # remarquage par l'opérateur, indistinguables (décision du
+                    # propriétaire, 29/10/2026) : le rapport garde cette
+                    # ambiguïté explicite plutôt que d'incriminer le marquage.
+                    message += " — écart : mauvais marquage au départ ou remarquage par l'opérateur (non distinguables)"
+                if not cls.dscp_confirmed:
+                    message += " (DSCP à confirmer auprès de l'opérateur)"
                 out.append(
                     _finding(
                         p,
                         "marking",
                         sev,
                         subject,
-                        f"{pct:.1f}% conforme"
-                        + ("" if cls.dscp_confirmed else " (DSCP à confirmer auprès de l'opérateur)"),
+                        message,
                         site=site,
                         direction="egress",
                         samples=samples,
                         evidence={"dscp_seen": rows, "match": str(m)},
+                        combined=_combined(rows),
                     )
                 )
+    logger.debug("check_marking_conformity: sortie | {} constat(s)", len(out))
     return out
 
 
 def check_dscp_plan(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Par sortie et sens : DSCP hors plan (mal marqué / remarquage opérateur sur le sens entrant)."""
+    logger.debug("check_dscp_plan: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     known = p.all_dscp()
     for site, ex in _exits(p, only_site):
@@ -237,6 +350,7 @@ def check_dscp_plan(c: ElastiflowClient, p: Policy, w: Window, only_site: str | 
                     evidence={"unknown": unknown},
                 )
             )
+    logger.debug("check_dscp_plan: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -345,6 +459,7 @@ def check_port_ranges(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
 
 def check_untrusted_ports(c: ElastiflowClient, p: Policy, w: Window) -> list[Finding]:
     """Détecte du DSCP privilégié entrant par un port non fiable (marquage non remis à zéro / abus)."""
+    logger.debug("check_untrusted_ports: entrée | ports_non_fiables={}", len(p.untrusted))
     out: list[Finding] = []
     for u in p.untrusted:
         if u.get("ifindex") is None:
@@ -367,11 +482,13 @@ def check_untrusted_ports(c: ElastiflowClient, p: Policy, w: Window) -> list[Fin
                         evidence=r,
                     )
                 )
+    logger.debug("check_untrusted_ports: sortie | {} constat(s)", len(out))
     return out
 
 
 def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Part de chaque classe par sortie et sens vs max_share_pct (part du trafic échantillonné)."""
+    logger.debug("check_class_share: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
         for d in _DIRS:
@@ -379,9 +496,10 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
             total = sum(r["bytes"] for r in rows) or 1.0
             samples = sum(r["samples"] for r in rows)
             for cls in p.classes:
-                if cls.max_share_pct is None:
+                if cls.max_share_pct is None and cls.car_bps is None:
                     continue
-                share = 100 * sum(r["bytes"] for r in rows if r["dscp"] in cls.dscp) / total
+                cls_rows = [r for r in rows if r["dscp"] in cls.dscp]
+                share = 100 * sum(r["bytes"] for r in cls_rows) / total
                 sev = Severity.OK if share <= cls.max_share_pct else Severity.WARN
                 if not _enough(samples, p):
                     sev = Severity.INCONCLUSIVE
@@ -395,8 +513,10 @@ def check_class_share(c: ElastiflowClient, p: Policy, w: Window, only_site: str 
                         site=site,
                         direction=d,
                         samples=samples,
+                        combined=_combined(cls_rows),
                     )
                 )
+    logger.debug("check_class_share: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -435,7 +555,7 @@ def check_saturation_and_overflow(
             counters_ok = bool(full)
             if counters_ok:
                 assert rates is not None  # pour le typage : counters_ok le garantit
-                util = {ts: 100 * (rates.bucket_bytes[ts] * 8 / w.bucket_seconds) / ex.capacity_bps for ts in full}
+                util = {ts: 100 * (rates.bucket_bytes[ts] * 8 / w.bucket_seconds) / ex.capacity_for(d) for ts in full}
                 # les échantillons ne comptent que sur les buckets qui fondent le verdict
                 samples = sum(samples_by_ts.get(ts, 0) for ts in full)
                 source = "counters"
@@ -456,9 +576,18 @@ def check_saturation_and_overflow(
                         )
                     )
                     continue
-                util = {ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_bps for ts, v in by_ts.items()}
+                util = {
+                    ts: 100 * (sum(v.values()) * 8 / w.bucket_seconds) / ex.capacity_for(d) for ts, v in by_ts.items()
+                }
                 source = "flows"
                 note = "repli sur les flux échantillonnés (compteurs absents ou insuffisants)"
+                # plancher de bucket (#28) : sous min_samples par bucket, un bucket isolé ne prouve rien
+                per_bucket = statistics.median(samples_by_ts.get(ts, 0) for ts in util)
+                if per_bucket < th["min_samples"]:
+                    note += (
+                        f" ; {per_bucket:.0f} éch./bucket < {th['min_samples']:.0f} : bucket {w.bucket} sous le"
+                        " plancher du sampling (voir qos-audit sampling)"
+                    )
             p95 = _p95(list(util.values()))
             peak_ts = max(util, key=util.get)
             over_warn = sum(1 for u in util.values() if u >= th["link_util_warn_pct"])
@@ -482,8 +611,9 @@ def check_saturation_and_overflow(
                         "peak_ts": peak_ts,
                         "buckets_over_warn": over_warn,
                         "buckets": len(util),
-                        "capacity_bps": ex.capacity_bps,
+                        "capacity_bps": ex.capacity_for(d),
                         "utilization_source": source,
+                        "bucket": w.bucket,
                         **(
                             {
                                 "counter_coverage_pct": 100 * rates.coverage,
@@ -509,7 +639,7 @@ def check_saturation_and_overflow(
             # seuls les échantillons des buckets évaluables fondent les verdicts de débordement
             evaluable_samples = sum(samples_by_ts.get(ts, 0) for ts in evaluable)
             for cls in p.classes:
-                if cls.max_share_pct is None:
+                if cls.max_share_pct is None and cls.car_bps is None:
                     continue
                 if not _enough(evaluable_samples, p):
                     out.append(
@@ -540,7 +670,9 @@ def check_saturation_and_overflow(
                         )
                     )
                     continue
-                budget = ex.capacity_bps * cls.max_share_pct / 100
+                budget = ex.capacity_for(d) * cls.max_share_pct / 100 if cls.max_share_pct is not None else cls.car_bps
+                if cls.car_bps is not None and cls.max_share_pct is not None:
+                    budget = min(budget, cls.car_bps)  # le car configuré est le garant effectif
                 over: list[int] = []
                 busy: list[int] = []
                 for ts in evaluable:
@@ -584,10 +716,9 @@ def check_saturation_and_overflow(
     return out
 
 
-def check_congestion(
-    c: ElastiflowClient, p: Policy, w: Window, counters: CounterSource, only_site: str | None = None
-) -> list[Finding]:
-    """Indices de congestion : marques ECN CE (indirect) et drops par file (preuve directe, si source branchée)."""
+def check_congestion(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
+    """Indice indirect de congestion : marques ECN CE vues en sortie."""
+    logger.debug("check_congestion: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site, ex in _exits(p, only_site):
         rows = c.bytes_by(w, ["ecn"], exit_filter(ex.exporter, ex.ifindex, Direction.EGRESS.value))
@@ -607,31 +738,7 @@ def check_congestion(
                 samples=samples,
             )
         )
-        try:
-            drops = counters.queue_drops(ex.exporter, ex.ifindex, w)
-        except NotImplementedError:
-            logger.debug("Source de compteurs non implémentée pour {}", ex.exporter)
-            continue
-        if drops is None:
-            continue
-        lost = sum(drops.par_file.values())
-        out.append(
-            _finding(
-                p,
-                "congestion_drops",
-                Severity.CRIT if lost else Severity.OK,
-                f"{site.name}/{ex.name}",
-                f"{lost} paquets droppés entre {drops.depuis:%d/%m %H:%M} et "
-                f"{drops.jusqu_a:%d/%m %H:%M} UTC (intervalle d'observation contenant la fenêtre)",
-                site=site,
-                direction="egress",
-                evidence={
-                    "par_file": drops.par_file,
-                    "depuis": drops.depuis.isoformat(),
-                    "jusqu_a": drops.jusqu_a.isoformat(),
-                },
-            )
-        )
+    logger.debug("check_congestion: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -744,6 +851,7 @@ def check_counter_consistency(c: ElastiflowClient, p: Policy, w: Window, only_si
 
 def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str | None = None) -> list[Finding]:
     """Répartition entre sorties d'un site : détecte une sortie « secours » qui porte du trafic (bascule)."""
+    logger.debug("check_exit_balance: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     for site in p.sites:
         if only_site and site.name != only_site:
@@ -769,6 +877,7 @@ def check_exit_balance(c: ElastiflowClient, p: Policy, w: Window, only_site: str
                         samples=totals[ex.name][1],
                     )
                 )
+    logger.debug("check_exit_balance: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -987,12 +1096,13 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
     précision est le plus grand parmi ceux qui portent au moins 10 % des échantillons (cas défavorable) ; pour le coût,
     le plus petit.
     """
+    logger.debug("check_sampling_adequacy: entrée | sites={} site={}", len(p.sites), only_site)
     out: list[Finding] = []
     th = p.thresholds
     sp = params_from_thresholds(th)
     for site, ex in _exits(p, only_site):
-        rec = recommended_sampling(ex.capacity_bps, sp)
         for d in _DIRS:
+            rec = recommended_sampling(ex.capacity_for(d), sp)
             rows = c.bytes_by(w, ["in_if", "sampling"], exit_filter(ex.exporter, ex.ifindex, d))
             samples = sum(r["samples"] for r in rows)
             subject = f"{site.name}/{ex.name}"
@@ -1007,14 +1117,27 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                 per_rate[int(r["sampling"])] += r["samples"]
             significant = [rate for rate, n in per_rate.items() if n >= 0.1 * samples] or list(per_rate)
             worst, finest = max(significant), min(significant)
-            err = expected_error_pct(ex.capacity_bps, worst, sp)
+            err = expected_error_pct(ex.capacity_for(d), worst, sp)
             sev = Severity.OK
             if err > th["sampling_error_crit_pct"]:
                 sev = Severity.CRIT
             elif err > th["sampling_error_target_pct"]:
                 sev = Severity.WARN
             msg = f"1:{worst} observé, recommandé 1:{rec} ; erreur au plancher ±{err:.1f}% (cible {th['sampling_error_target_pct']}%)"
-            evidence = {"rates": dict(per_rate), "recommended": rec, "error_pct": err, "capacity_bps": ex.capacity_bps}
+            evidence = {
+                "rates": dict(per_rate),
+                "recommended": rec,
+                "error_pct": err,
+                "capacity_bps": ex.capacity_for(d),
+            }
+            if len(significant) > 1:
+                # Taux des ports LAN d'entrée mélangés dans la vue de la sortie (#27) : un échantillonnage en sortie
+                # sur l'interface WAN donne un taux unique, celui que recommande ce contrôle.
+                msg += (
+                    f" ; taux mélangés ({', '.join(f'1:{r}' for r in sorted(significant))}) : échantillonner en sortie"
+                    " sur l'interface WAN si le modèle le permet"
+                )
+                evidence["mixed_rates"] = sorted(significant)
             out.append(
                 _finding(
                     p,
@@ -1028,7 +1151,7 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                     evidence=evidence,
                 )
             )
-            cost = worst_case_samples_per_s(ex.capacity_bps, finest, sp.cost_size_bytes)
+            cost = worst_case_samples_per_s(ex.capacity_for(d), finest, sp.cost_size_bytes)
             if cost > th["sampling_max_samples_per_s"]:
                 msg = f"1:{finest} : jusqu'à {cost:.0f} échantillons/s au pire cas (risque CPU / export)"
                 out.append(
@@ -1043,11 +1166,13 @@ def check_sampling_adequacy(c: ElastiflowClient, p: Policy, w: Window, only_site
                         evidence={"samples_per_s": cost},
                     )
                 )
+    logger.debug("check_sampling_adequacy: sortie | {} constat(s)", len(out))
     return out
 
 
 def check_sampling_drift(c: ElastiflowClient, p: Policy, w: Window, cal: Calibration) -> list[Finding]:
     """Sampling configuré (calibration) vs sampling reçu dans ElastiFlow, interface par interface."""
+    logger.debug("check_sampling_drift: entrée | exporteurs={}", len(cal.exporters))
     out: list[Finding] = []
     for name, ex_cal in cal.exporters.items():
         rows = c.bytes_by(w, ["in_if", "sampling"], {"term": {FIELDS["exporter"]: name}})
@@ -1066,6 +1191,7 @@ def check_sampling_drift(c: ElastiflowClient, p: Policy, w: Window, cal: Calibra
             else:
                 msg = f"configuré 1:{itf.sampling_rate}, reçu {sorted(rates)}"
                 out.append(_finding(p, "sampling_drift", Severity.WARN, subject, msg, evidence=rates))
+    logger.debug("check_sampling_drift: sortie | {} constat(s)", len(out))
     return out
 
 
@@ -1075,7 +1201,9 @@ _COMPLETE = "revalidation complète"
 
 def _rates(e: ExporterCal) -> set[int]:
     """Sampling-rates configurés sur les interfaces d'un exporteur."""
-    return {i.sampling_rate for i in e.interfaces if i.sampling_rate is not None}
+    rates = {i.sampling_rate for i in e.interfaces if i.sampling_rate is not None}
+    logger.debug("_rates: sortie | {} taux sur {} interface(s)", len(rates), len(e.interfaces))
+    return rates
 
 
 def _scope_drift(e: ExporterCal, v: Validation, cal: Calibration) -> list[str]:
@@ -1166,7 +1294,9 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     out: list[Finding] = []
 
     def add(subject: str, msg: str) -> None:
+        logger.debug("check_calibration.add: entrée | subject={}", subject)
         out.append(_finding(p, "calibration", Severity.WARN, subject, msg))
+        logger.debug("check_calibration.add: sortie | {} constat(s)", len(out))
 
     if cal.sampling_already_applied is None:
         add("elastiflow", "facteur d'échantillonnage non validé (P6) : volumes potentiellement faux d'un facteur N")
@@ -1190,13 +1320,159 @@ def check_calibration(p: Policy, cal: Calibration, today: date | None = None) ->
     return result
 
 
+def _bulk_filter(ex: Exit, app: Any) -> dict:
+    """Filtre de la sortie (egress) restreint au protocole et aux ports d'une application du catalogue."""
+    logger.debug("_bulk_filter: entrée | {}:{} {}", ex.exporter, ex.ifindex, app.name)
+    flt = exit_filter(ex.exporter, ex.ifindex, "egress")
+    if app.protocol:
+        flt["bool"]["filter"].append({"term": {FIELDS["proto"]: app.protocol}})
+    if app.ports:
+        flt["bool"]["filter"].append({"range": {FIELDS["dst_port"]: {"gte": app.ports[0], "lte": app.ports[1]}}})
+    logger.debug("_bulk_filter: retour | {} clause(s)", len(flt["bool"]["filter"]))
+    return flt
+
+
+def _bytes_per_bucket(series: list[dict], w: Window) -> dict[int, float]:
+    """Octets par début de bucket (toutes classes confondues)."""
+    logger.debug("_bytes_per_bucket: entrée | {} ligne(s)", len(series))
+    out: dict[int, float] = defaultdict(float)
+    for r in series:
+        key = _bucket_key(r["ts"], w)
+        if key is not None:
+            out[key] += r["bytes"]
+    logger.debug("_bytes_per_bucket: retour | {} bucket(s)", len(out))
+    return out
+
+
+def check_bulk_business_hours(
+    c: ElastiflowClient,
+    p: Policy,
+    w: Window,
+    apps: list,
+    only_site: str | None = None,
+    tz: str = "Europe/Paris",
+) -> list[Finding]:
+    """Trafic de masse hors de sa plage autorisée qui pousse une sortie en saturation (#34).
+
+    Pour chaque application du catalogue marquée ``profile.bulk`` et chaque sortie : buckets où l'utilisation
+    estimée par les flux atteint ``link_util_warn_pct`` de la capacité, où l'application porte au moins
+    ``bulk_share_warn_pct`` des octets du bucket, et dont l'heure locale (``tz``) est hors de
+    ``profile.plage_horaire`` (sans plage, toute heure compte). WARN dès un tel bucket : un shaper local
+    ou un déplacement de la plage s'impose, l'opérateur n'ayant pas de classe sous BF.
+
+    Args:
+        c: Client ElastiFlow.
+        p: Politique (sorties, capacités, seuils).
+        w: Fenêtre d'analyse.
+        apps: Catalogue validé (``advisor.catalog.App``).
+        only_site: Restreint l'audit à un site.
+        tz: Fuseau des plages horaires du catalogue (heure locale des équipements).
+
+    Returns:
+        Un constat ``bulk_business_hours`` par sortie et application de masse ayant du trafic.
+    """
+    logger.debug("check_bulk_business_hours: entrée | {} application(s), fuseau {}", len(apps), tz)
+    th = p.thresholds
+    zone = ZoneInfo(tz)
+    bulk = [a for a in apps if a.profile.get("bulk") and (a.protocol or a.ports)]
+    out: list[Finding] = []
+    for site, ex in _exits(p, only_site) if bulk else ():
+        total = _bytes_per_bucket(c.bytes_timeseries(w, exit_filter(ex.exporter, ex.ifindex, "egress")), w)
+        for app in bulk:
+            mass = _bytes_per_bucket(c.bytes_timeseries(w, _bulk_filter(ex, app)), w)
+            if not any(mass.values()):
+                continue
+            hours = parse_hours(app.profile.get("plage_horaire"))
+            hot: list[str] = []
+            for ts, octets in sorted(mass.items()):
+                bucket_total = max(total.get(ts, 0.0), octets)
+                util = 100 * bucket_total * 8 / w.bucket_seconds / ex.capacity_bps
+                local = datetime.fromtimestamp(ts, zone)
+                allowed = hours is not None and in_hours(local.hour, hours)
+                heavy = 100 * octets / bucket_total >= th["bulk_share_warn_pct"]
+                if not allowed and heavy and util >= th["link_util_warn_pct"]:
+                    hot.append(local.isoformat(timespec="minutes"))
+            when = f"hors de la plage {app.profile.get('plage_horaire')}" if hours else "sans plage autorisée"
+            msg = (
+                f"{len(hot)} bucket(s) {when} où {app.name} pèse au moins {th['bulk_share_warn_pct']:g}% d'une sortie"
+                f" à {th['link_util_warn_pct']:g}% ou plus : shaper local (advise) ou plage à revoir"
+                if hot
+                else f"{app.name} ne pousse pas la sortie en saturation {when}"
+            )
+            out.append(
+                _finding(
+                    p,
+                    "bulk_business_hours",
+                    Severity.WARN if hot else Severity.OK,
+                    f"{site.name}/{ex.name}/{app.name}",
+                    msg,
+                    site=site,
+                    direction="egress",
+                    evidence={"hot_buckets": hot[:20], "hot_count": len(hot), "allowed_hours": hours, "timezone": tz},
+                )
+            )
+    logger.debug("check_bulk_business_hours: retour | {} constat(s)", len(out))
+    return out
+
+
+def check_microbursts(findings: list[Finding], w: Window) -> list[Finding]:
+    """Indice de microburst (#28) : congestion vue en sortie sur une sortie que la saturation au bucket juge saine.
+
+    Des marques ECN CE (``congestion_ecn`` WARN) — ou des drops de file (``congestion_drops`` CRIT) si la source
+    de compteurs les fournit — alors que l'utilisation en sortie reste sous le seuil d'alerte (``saturation``
+    egress OK) indiquent des rafales plus courtes que le bucket : la moyenne du bucket les lisse. Le constat
+    oriente vers un bucket plus court (``--bucket``, borné par le plancher du sampling) ou vers la lecture des
+    compteurs de file, seule mesure qui voit des rafales de quelques millisecondes.
+
+    Args:
+        findings: Constats déjà produits (saturation et congestion).
+        w: Fenêtre d'analyse (taille du bucket).
+
+    Returns:
+        Un constat WARN ``microburst`` par sortie concernée.
+    """
+    logger.debug("check_microbursts: entrée | {} constats, bucket {}", len(findings), w.bucket)
+    calm = {
+        (f.site, f.subject): f
+        for f in findings
+        if f.check == "saturation" and f.direction == "egress" and f.severity is Severity.OK
+    }
+    # Marques de congestion qui signent un pic : ECN CE vu en sortie (WARN) ou drops de file (CRIT).
+    alarm: dict[str, Severity] = {"congestion_ecn": Severity.WARN, "congestion_drops": Severity.CRIT}
+    out: list[Finding] = []
+    for f in findings:
+        min_sev = alarm.get(f.check)
+        if min_sev is None or f.severity < min_sev:
+            continue
+        sat = calm.get((f.site, f.subject))
+        if sat is None:
+            continue
+        p95 = sat.evidence.get("p95_pct", 0.0)
+        out.append(
+            Finding(
+                "microburst",
+                Severity.WARN,
+                f.subject,
+                f"{f.message} alors que l'utilisation reste à p95 {p95:.0f}% par bucket de {w.bucket} : rafales plus"
+                " courtes que le bucket probables ; réduire --bucket (plancher : qos-audit sampling) ou lire les"
+                " compteurs de file",
+                {"congestion": f.evidence, "p95_pct": p95, "bucket": w.bucket},
+                f.site,
+                "egress",
+            )
+        )
+    logger.debug("check_microbursts: retour | {} indice(s)", len(out))
+    return out
+
+
 def run_all(
     c: ElastiflowClient,
     p: Policy,
     w: Window,
-    counters: CounterSource | None = None,
     only_site: str | None = None,
     cal: Calibration | None = None,
+    apps: list | None = None,
+    tz: str = "Europe/Paris",
 ) -> list[Finding]:
     """Exécute tous les contrôles.
 
@@ -1204,15 +1480,17 @@ def run_all(
         c: Client ElastiFlow.
         p: Politique théorique.
         w: Fenêtre d'analyse.
-        counters: Source de compteurs de drops (optionnelle).
         only_site: Restreint l'audit à un site.
         cal: Calibration issue de la validation ElastiFlow (optionnelle).
+        apps: Catalogue validé (optionnel) : active ``bulk_business_hours``.
+        tz: Fuseau des plages horaires du catalogue.
 
     Returns:
         Liste des constats.
     """
-    counters = counters or NullCounters()
+    logger.debug("run_all: entrée | sites={} site={} calibration={}", len(p.sites), only_site, cal is not None)
     findings: list[Finding] = []
+    findings += check_capacity(p, only_site)
     findings += check_marking_conformity(c, p, w, only_site)
     findings += check_dscp_plan(c, p, w, only_site)
     findings += check_untrusted_ports(c, p, w)
@@ -1220,11 +1498,15 @@ def run_all(
     findings += check_port_ranges(c, p, w, only_site)
     findings += check_saturation_and_overflow(c, p, w, only_site)
     findings += check_counter_consistency(c, p, w, only_site)
-    findings += check_congestion(c, p, w, counters, only_site)
+    findings += check_congestion(c, p, w, only_site)
+    findings += check_microbursts(findings, w)
     findings += check_exit_balance(c, p, w, only_site)
     findings += check_encapsulated_traffic(c, p, w, only_site)
     findings += check_sampling_adequacy(c, p, w, only_site)
+    if apps:
+        findings += check_bulk_business_hours(c, p, w, apps, only_site, tz)
     if cal is not None:
         findings += check_calibration(p, cal)
         findings += check_sampling_drift(c, p, w, cal)
+    logger.debug("run_all: sortie | {} constat(s)", len(findings))
     return findings

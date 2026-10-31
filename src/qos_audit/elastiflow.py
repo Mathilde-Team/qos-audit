@@ -12,11 +12,14 @@ __all__ = [
     "COUNTER_FIELDS",
     "DEFAULT_COUNTERS_INDEX",
     "FIELDS",
+    "OPTIONAL_FIELDS",
     "ElastiflowClient",
+    "SchemaError",
     "Window",
     "configure_counter_fields",
     "configure_fields",
     "exit_filter",
+    "mapped_fields",
 ]
 
 # À VÉRIFIER contre le schéma de la version ElastiFlow déployée (les noms varient selon les versions).
@@ -34,8 +37,11 @@ FIELDS = {
     "ip_proto": "network.iana_number",  # numéro de protocole IP (47 GRE, 50 ESP) — À VÉRIFIER
     "bytes": "network.bytes",
     "packets": "network.packets",
-    "sampling": "flow.sampling.interval",
+    "sampling": "flow.sampling_interval",
 }
+
+# Clés logiques que le code n'interroge pas toujours : absentes du mapping, elles ne bloquent pas l'audit.
+OPTIONAL_FIELDS = frozenset({"ecn"})
 
 # Compteurs d'interface (counter samples sFlow) : à VÉRIFIER contre le schéma de la version ElastiFlow déployée
 # (valeurs relevées sur les index patterns « telemetry » publiés par ElastiFlow ; netif.* en schéma ECS).
@@ -51,6 +57,55 @@ COUNTER_FIELDS = {
 DEFAULT_COUNTERS_INDEX = "elastiflow-telemetry_flow-*"
 
 _UNITS = {"s": 1, "m": 60, "h": 3600}
+
+
+class SchemaError(RuntimeError):
+    """Un ou plusieurs champs de ``FIELDS`` sont absents du mapping de l'index ElastiFlow."""
+
+    def __init__(self, index: str, missing: dict[str, str]) -> None:
+        """Construit l'erreur.
+
+        Args:
+            index: Pattern d'index interrogé.
+            missing: ``{clé logique: nom de champ}`` absents du mapping.
+        """
+        logger.debug("SchemaError.__init__ : index={}, {} champ(s) absent(s)", index, len(missing))
+        self.index = index
+        self.missing = missing
+        detail = ", ".join(f"{k} = {v}" for k, v in sorted(missing.items()))
+        super().__init__(
+            f"Champs absents du mapping de {index} : {detail}. "
+            "Relever le mapping réel (phase 0, P4) et corriger la section des champs de calibration.yaml."
+        )
+        logger.debug("SchemaError.__init__ -> construite")
+
+
+def mapped_fields(mapping: dict) -> set[str]:
+    """Liste les chemins de champs (``a.b.c``) d'une réponse ``indices.get_mapping``, tous index confondus.
+
+    Args:
+        mapping: Réponse brute ``{index: {"mappings": {"properties": ...}}}``.
+
+    Returns:
+        Ensemble des chemins de champs feuilles et objets.
+    """
+    logger.debug("mapped_fields : {} index", len(mapping))
+    paths: set[str] = set()
+
+    def walk(props: dict, prefix: str) -> None:
+        logger.debug("mapped_fields.walk : prefix={!r}, {} propriété(s)", prefix, len(props))
+        for name, spec in props.items():
+            path = f"{prefix}{name}"
+            paths.add(path)
+            walk(spec.get("properties", {}), f"{path}.")
+            for sub in spec.get("fields", {}):
+                paths.add(f"{path}.{sub}")
+        logger.debug("mapped_fields.walk -> prefix={!r} parcouru", prefix)
+
+    for idx in mapping.values():
+        walk(idx.get("mappings", {}).get("properties", {}), "")
+    logger.debug("mapped_fields -> {} chemins", len(paths))
+    return paths
 
 
 def configure_counter_fields(overrides: dict[str, str]) -> None:
@@ -135,6 +190,10 @@ class ElastiflowClient:
         scale_by_sampling: bool = True,
         bytes_overhead_per_packet: int = 0,
         counters_index: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        verify_certs: bool | None = None,
+        ca_certs: str | None = None,
     ) -> None:
         """Initialise le client.
 
@@ -146,8 +205,21 @@ class ElastiflowClient:
             bytes_overhead_per_packet: Octets à retrancher par paquet pour passer de la base trame à la base IP
                 (14 si ElastiFlow additionne des octets de trame ; résultat de la phase 0, P5).
             counters_index: Pattern d'index des counter samples sFlow (défaut : ``DEFAULT_COUNTERS_INDEX``).
+            username: Utilisateur OpenSearch (authentification basique ; #17). Le mot de passe ne se met pas
+                dans un fichier du dépôt : la CLI le lit dans ``QOS_AUDIT_OS_PASSWORD``.
+            password: Mot de passe OpenSearch, jamais en argument de ligne de commande (historique de shell).
+            verify_certs: Vérification TLS (None : comportement d'opensearch-py selon le schéma de l'URL).
+            ca_certs: Bundle CA (PEM) pour vérifier le certificat du serveur (TLS, #17).
         """
-        self._os = OpenSearch(hosts=hosts)
+        logger.debug("ElastiflowClient.__init__: entrée | hotes={} index={}", len(hosts), index)
+        options: dict = {}
+        if username is not None:
+            options["http_auth"] = (username, password or "")
+        if ca_certs is not None:
+            options["ca_certs"] = ca_certs
+        if verify_certs is not None:
+            options["verify_certs"] = verify_certs
+        self._os = OpenSearch(hosts=hosts, **options)
         self._index = index
         self._counters_index = counters_index or DEFAULT_COUNTERS_INDEX
         self._scale = scale_by_sampling
@@ -160,22 +232,70 @@ class ElastiflowClient:
             self._overhead,
         )
 
+    def required_keys(self) -> set[str]:
+        """Clés logiques de ``FIELDS`` réellement interrogées avec ce paramétrage.
+
+        Returns:
+            Les clés obligatoires (``sampling`` seulement si l'on extrapole, ``packets`` seulement si l'on corrige
+            la base trame).
+        """
+        logger.debug("required_keys : scale={}, overhead={}", self._scale, self._overhead)
+        keys = set(FIELDS) - OPTIONAL_FIELDS
+        if not self._scale:
+            keys.discard("sampling")
+        if not self._overhead:
+            keys.discard("packets")
+        logger.debug("required_keys -> {}", sorted(keys))
+        return keys
+
+    def check_fields(self) -> None:
+        """Vérifie que chaque champ interrogé existe dans le mapping de l'index (issue #16).
+
+        Raises:
+            SchemaError: Si des champs sont absents ; le message liste les clés et les noms attendus.
+        """
+        logger.debug("check_fields : index={}", self._index)
+        present = mapped_fields(self._os.indices.get_mapping(index=self._index))
+        missing = {k: FIELDS[k] for k in self.required_keys() if FIELDS[k] not in present}
+        if missing:
+            err = SchemaError(self._index, missing)
+            logger.debug("check_fields -> {} champ(s) absent(s)", len(missing))
+            raise err
+        logger.debug("check_fields -> schéma conforme")
+
     def _query(self, w: Window, extra_filter: dict | None) -> dict:
         rng = {"range": {"@timestamp": {"gte": w.start.isoformat(), "lt": w.end.isoformat()}}}
         logger.debug("_query: sortie | filtre={} +{}", "@timestamp", "extra" if extra_filter else "aucun")
         return {"bool": {"filter": [rng] + ([extra_filter] if extra_filter else [])}}
 
+    def _bytes_expr(self) -> str | None:
+        """Octets extrapolés d'un enregistrement en Painless, ou ``None`` s'ils valent le champ brut."""
+        logger.debug("_bytes_expr: entrée | échelle={} overhead={}", self._scale, self._overhead)
+        expr: str | None = None
+        if self._scale or self._overhead:
+            expr = f"doc['{FIELDS['bytes']}'].value"
+            if self._overhead:
+                expr = f"({expr} - {self._overhead} * doc['{FIELDS['packets']}'].value)"
+            if self._scale:
+                expr += f" * Math.max(1, doc['{FIELDS['sampling']}'].value)"
+        logger.debug("_bytes_expr: sortie | script={}", expr is not None)
+        return expr
+
     def _bytes_agg(self) -> dict:
-        if not self._scale and not self._overhead:
-            logger.debug("_bytes_agg: sortie | somme directe")
-            return {"sum": {"field": FIELDS["bytes"]}}
-        expr = f"doc['{FIELDS['bytes']}'].value"
-        if self._overhead:
-            expr = f"({expr} - {self._overhead} * doc['{FIELDS['packets']}'].value)"
-        if self._scale:
-            expr += f" * Math.max(1, doc['{FIELDS['sampling']}'].value)"
-        logger.debug("_bytes_agg: sortie | script")
-        return {"sum": {"script": {"source": expr}}}
+        """Somme des octets extrapolés (champ brut sans extrapolation ni correction)."""
+        logger.debug("_bytes_agg: entrée | échelle={} overhead={}", self._scale, self._overhead)
+        expr = self._bytes_expr()
+        agg = {"sum": {"field": FIELDS["bytes"]}} if expr is None else {"sum": {"script": {"source": expr}}}
+        logger.debug("_bytes_agg: sortie | script={}", expr is not None)
+        return agg
+
+    def _bytes_sq_agg(self) -> dict:
+        """Σ x_i² des octets extrapolés par enregistrement : incertitude combinée par classe (#27)."""
+        logger.debug("_bytes_sq_agg: entrée")
+        expr = self._bytes_expr() or f"doc['{FIELDS['bytes']}'].value"
+        agg = {"sum": {"script": {"source": f"Math.pow({expr}, 2)"}}}
+        logger.debug("_bytes_sq_agg: sortie | script Painless")
+        return agg
 
     def bytes_by(
         self, w: Window, group_by: list[str], extra_filter: dict | None = None, size: int = 1000, max_pages: int = 20
@@ -190,7 +310,8 @@ class ElastiflowClient:
             max_pages: Garde-fou sur le nombre de pages.
 
         Returns:
-            Lignes ``{<clé>: valeur, "bytes": float, "samples": int}``.
+            Lignes ``{<clé>: valeur, "bytes": float, "bytes_sq": float, "samples": int}`` ; ``bytes_sq`` est la
+            somme des carrés des octets extrapolés par enregistrement (``models.combined_error_pct``).
         """
         logger.debug("bytes_by: entrée | group_by={} max_pages={}", group_by, max_pages)
         sources = [{k: {"terms": {"field": FIELDS[k]}}} for k in group_by]
@@ -203,10 +324,13 @@ class ElastiflowClient:
             body = {
                 "size": 0,
                 "query": self._query(w, extra_filter),
-                "aggs": {"g": {"composite": comp, "aggs": {"b": self._bytes_agg()}}},
+                "aggs": {"g": {"composite": comp, "aggs": {"b": self._bytes_agg(), "q": self._bytes_sq_agg()}}},
             }
             agg = self._os.search(index=self._index, body=body)["aggregations"]["g"]
-            rows += [{**b["key"], "bytes": b["b"]["value"], "samples": b["doc_count"]} for b in agg["buckets"]]
+            rows += [
+                {**b["key"], "bytes": b["b"]["value"], "bytes_sq": b["q"]["value"], "samples": b["doc_count"]}
+                for b in agg["buckets"]
+            ]
             after = agg.get("after_key")
             if not after or not agg["buckets"]:
                 logger.debug("bytes_by: sortie (pagination terminée) | {} ligne(s)", len(rows))

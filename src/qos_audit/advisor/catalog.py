@@ -6,10 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from loguru import logger
 
 from qos_audit.policy import parse_ports
-
-from loguru import logger
 
 __all__ = ["App", "load_catalog"]
 
