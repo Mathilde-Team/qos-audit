@@ -2,9 +2,13 @@
 # Source de vérité (écrite à la main ou extraite des ACL + classifier/behavior Comware).
 dscp_names: {46: EF, 34: AF41, 26: AF31, 18: AF21, 10: AF11, 8: CS1, 0: BE, 48: CS6, 40: CS5}
 
+# Listes de marquage par opérateur (#14) : décommenter pour appliquer un profil de policies/marquages.json.
+# Les classes du profil prennent son DSCP et passent en dscp_confirmed: true.
+# marking_profile: {file: marquages.json, profile: operateur1}
+
 classes:
   - name: ef
-    dscp: [46]                 # « EF 45 » : DSCP 45 ou part de bande ? à lever auprès de l'opérateur (P9)
+    dscp: [46]                 # TOIP = EF46 (confirmé, #14)
     priority: 1                # 1 = priorité stricte
     max_share_pct: 45          # HYPOTHÈSE (« EF 45 » = 45 % de la bande) : à confirmer ; budget = part de capacity_bps
     match:                     # ACL théoriques (préférer IP serveur + ports : les plages seules sont ambigües)
