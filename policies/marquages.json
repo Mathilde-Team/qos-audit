@@ -1,0 +1,7 @@
+{
+  "source": "Réponse de Mathilde sur l'issue #14 (31/10/2026) : plusieurs listes de marquage selon un critère, par exemple l'opérateur. Pas de CIR côté commutateurs : les routeurs le gèrent, les commutateurs ne font que le marquage.",
+  "profils": {
+    "operateur1": {"ef": "EF", "d1": "AF11", "d2": "AF21", "d3": "AF31", "bf": "CS0"},
+    "operateur2": {"ef": "EF", "d1": "AF21", "d2": "AF11", "d3": "AF31", "bf": "CS0"}
+  }
+}

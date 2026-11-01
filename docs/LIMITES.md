@@ -64,8 +64,11 @@ soit ±24 % au lieu de ±10 %.
   le modèle le permet (#27). L'extrapolation, elle, se fait enregistrement par enregistrement avec son propre taux.
 - **Facteur d'échantillonnage inconnu** : sans P6, l'outil suppose qu'il n'est pas appliqué ; si ElastiFlow l'applique déjà,
   les volumes sont faux d'un facteur N. Le contrôle `calibration` le signale.
-- **Classes de l'opérateur** : D1, D2 et D3 (AF31, AF21, AF11) sont des hypothèses tant que l'opérateur ne les a pas confirmées
-  par écrit. « EF 45 » reste ambigu (DSCP 45 ou part de bande).
+- **Classes de l'opérateur** : le marquage dépend de l'opérateur (#14, réponse du 31/10/2026). Les listes sont dans
+  `policies/marquages.json` (TOIP = EF46, D1/D2/D3 en AF11/AF21/AF31 selon l'opérateur, BF = CS0) et la clé
+  `marking_profile` de la politique choisit la liste. Sans profil, D1, D2 et D3 restent des hypothèses
+  (`dscp_confirmed: false`). Il n'y a pas de CIR à contrôler côté commutateurs : les routeurs le gèrent, les commutateurs
+  ne font que le marquage.
 - **Pas de classe sous BF chez l'opérateur** : le trafic de masse (sauvegarde) ne peut pas être « abaissé » de bout en bout ;
   seul un shaper local ou une plage horaire le contient. `advise` en produit un brouillon (débit par défaut 20 % de la capacité,
   hypothèse) et `bulk_business_hours` repère la sauvegarde hors plage sur une sortie chargée ; les deux supposent que le
