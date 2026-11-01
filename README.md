@@ -44,7 +44,7 @@ OpenSearch peut exiger une authentification et TLS (#17) : `--os-user` (ou `$QOS
 1. Dérouler la phase 0 de la validation d'ElastiFlow et renseigner `calibration.yaml` (champs, facteur d'échantillonnage,
    base de comptage, délai d'ingestion). Tant qu'il est incomplet, l'audit le signale.
 2. Renseigner `capacity_bps` (CIR montant) et `capacity_bps_down` (CIR descendant — débit montant ≠ descendant) pour chaque sortie, avec le relevé de contrat (`operator`, `contract_ref`, `peak_bps`) : l'utilisation, la saturation et le sampling se calculent sur la capacité du sens mesuré. Le contrôle `capacity` signale une sortie sans capacité, dont la capacité vaut la vitesse du port, ou sans CIR descendant (#13).
-3. Confirmer auprès de l'opérateur la correspondance des classes D1, D2 et D3 (`dscp_confirmed: false` dans l'exemple).
+3. Choisir la liste de marquage de l'opérateur (`marking_profile`, profils dans `policies/marquages.json`, #14). Sans profil, D1, D2 et D3 restent `dscp_confirmed: false`.
 4. Lire `docs/LIMITES.md` : sFlow est statistique et ne voit ni les files ni les drops.
 
 ## Documentation

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -12,7 +15,16 @@ from qos_audit.comware.model import Acl, DeviceQos
 from qos_audit.comware.parser import parse_rule
 from qos_audit.models import WIDE_PORT_RANGE, Exit, FlowMatch, Policy, QosClass, Site
 
-__all__ = ["DEFAULT_THRESHOLDS", "load_policies", "load_policy", "parse_comware_acl", "parse_ports"]
+__all__ = [
+    "DEFAULT_THRESHOLDS",
+    "apply_marking_profile",
+    "dscp_value",
+    "load_marking_profiles",
+    "load_policies",
+    "load_policy",
+    "parse_comware_acl",
+    "parse_ports",
+]
 
 DEFAULT_THRESHOLDS: dict[str, float] = {
     "conformity_min_pct": 98,
@@ -58,6 +70,131 @@ def parse_ports(spec: str | int | None) -> tuple[int, int] | None:
     lo, _, hi = str(spec).partition("-")
     res = int(lo), int(hi or lo)
     logger.debug("parse_ports: sortie | {}", res)
+    return res
+
+
+def dscp_value(name: str | int) -> int:
+    """Valeur DSCP d'un nom normalisé (``EF``, ``AF31``, ``CS0``, ``BE``) ou d'un entier.
+
+    Accepte aussi la forme notée par l'opérateur, ``ef46`` (nom suivi de la valeur, contrôlée).
+
+    Args:
+        name: Nom ou valeur du DSCP.
+
+    Returns:
+        La valeur DSCP (0 à 63).
+
+    Raises:
+        ValueError: Nom inconnu, valeur hors plage ou incohérente.
+    """
+    logger.debug("dscp_value: entrée | {}", name)
+    if isinstance(name, int):
+        val = name
+    else:
+        txt = name.strip().upper()
+        m = re.fullmatch(r"(EF|BE|AF[1-4][1-3]|CS[0-7])(\d*)", txt)
+        if txt.isdigit():
+            val = int(txt)
+        elif m is None:
+            logger.debug("dscp_value: sortie (erreur) | {}", name)
+            raise ValueError(f"DSCP inconnu : {name!r}")
+        else:
+            base, suffix = m.groups()
+            if base == "EF":
+                val = 46
+            elif base == "BE":
+                val = 0
+            elif base.startswith("AF"):
+                val = 8 * int(base[2]) + 2 * int(base[3])
+            else:
+                val = 8 * int(base[2])
+            if suffix and int(suffix) != val:
+                logger.debug("dscp_value: sortie (erreur) | {} != {}", suffix, val)
+                raise ValueError(f"DSCP incohérent : {name!r} ({base} vaut {val})")
+    if not 0 <= val <= 63:
+        logger.debug("dscp_value: sortie (erreur) | hors plage {}", val)
+        raise ValueError(f"DSCP hors plage : {name!r}")
+    logger.debug("dscp_value: sortie | {}", val)
+    return val
+
+
+def load_marking_profiles(path: Path) -> dict[str, dict[str, int]]:
+    """Charge les listes de marquage (JSON) : un profil par critère, par exemple l'opérateur (#14).
+
+    Format : ``{"profils": {"<profil>": {"<classe>": "<DSCP>", ...}, ...}}``.
+
+    Args:
+        path: Fichier JSON des profils.
+
+    Returns:
+        Pour chaque profil, la valeur DSCP de chaque classe.
+
+    Raises:
+        ValueError: Fichier sans profil, ou DSCP invalide.
+    """
+    logger.debug("load_marking_profiles: entrée | {}", path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    profils = raw.get("profils") or {}
+    if not profils:
+        logger.debug("load_marking_profiles: sortie (erreur) | aucun profil")
+        raise ValueError(f"{path} : aucun profil de marquage")
+    res = {nom: {cls: dscp_value(v) for cls, v in table.items()} for nom, table in profils.items()}
+    logger.debug("load_marking_profiles: sortie | {} profil(s)", len(res))
+    return res
+
+
+def apply_marking_profile(classes: list[QosClass], table: dict[str, int], profile: str) -> list[QosClass]:
+    """Applique un profil de marquage : la classe prend le DSCP du profil, confirmé par l'opérateur.
+
+    Args:
+        classes: Classes de la politique.
+        table: DSCP par nom de classe.
+        profile: Nom du profil (pour les messages).
+
+    Returns:
+        Les classes mises à jour (les classes absentes du profil sont inchangées).
+
+    Raises:
+        ValueError: Le profil cite une classe absente de la politique.
+    """
+    logger.debug("apply_marking_profile: entrée | {} ({} classe(s))", profile, len(table))
+    names = {c.name for c in classes}
+    unknown = sorted(set(table) - names)
+    if unknown:
+        logger.debug("apply_marking_profile: sortie (erreur) | {}", unknown)
+        raise ValueError(f"profil {profile} : classe(s) absente(s) de la politique : {', '.join(unknown)}")
+    res = [replace(c, dscp=frozenset({table[c.name]}), dscp_confirmed=True) if c.name in table else c for c in classes]
+    logger.debug("apply_marking_profile: sortie | {}", {c.name: sorted(c.dscp) for c in res})
+    return res
+
+
+def _resolve_marking(raw: dict, path: Path, classes: list[QosClass]) -> list[QosClass]:
+    """Résout la clé ``marking_profile`` de la politique (``{file, profile}``, ``file`` relatif au YAML).
+
+    Args:
+        raw: Politique YAML brute.
+        path: Chemin de la politique.
+        classes: Classes chargées.
+
+    Returns:
+        Les classes, avec le profil appliqué s'il est déclaré.
+
+    Raises:
+        ValueError: Profil inconnu.
+    """
+    logger.debug("_resolve_marking: entrée | {}", raw.get("marking_profile"))
+    spec = raw.get("marking_profile")
+    if not spec:
+        logger.debug("_resolve_marking: sortie | aucun profil")
+        return classes
+    fichier = path.parent / spec.get("file", "marquages.json")
+    profils = load_marking_profiles(fichier)
+    nom = spec["profile"]
+    if nom not in profils:
+        logger.debug("_resolve_marking: sortie (erreur) | {} inconnu", nom)
+        raise ValueError(f"profil de marquage inconnu : {nom} (disponibles : {', '.join(sorted(profils))})")
+    res = apply_marking_profile(classes, profils[nom], nom)
+    logger.debug("_resolve_marking: sortie | profil {}", nom)
     return res
 
 
@@ -148,6 +285,7 @@ def load_policy(path: Path) -> Policy:
         )
         for c in raw["classes"]
     ]
+    classes = _resolve_marking(raw, path, classes)
     trust = raw.get("trust", {})
     sites = [Site(name=s["name"], exits=tuple(_load_exit(e) for e in s["exits"])) for s in raw.get("sites", [])]
     for s in sites:
