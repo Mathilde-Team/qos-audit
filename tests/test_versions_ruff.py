@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """ruff figé à la même version dans pyproject.toml, .pre-commit-config.yaml et le CI (#75).
 
 Le Makefile (``make lint``, groupe dev de pyproject.toml), le hook pre-commit et le job « Qualité » de

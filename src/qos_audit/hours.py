@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Plages horaires quotidiennes ``"22-06"`` (catalogue, #34) : lecture, appartenance, complément."""
 
 from __future__ import annotations

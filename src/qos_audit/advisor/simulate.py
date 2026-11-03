@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Simulation what-if : effet d'un reclassement sur les budgets de classes d'une sortie."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Contrôles automatisés par site, sortie et sens.
 
 Contrôles : conformité du marquage, DSCP hors plan, frontière de confiance, partage par classe,

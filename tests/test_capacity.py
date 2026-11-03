@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Contrôle `capacity` (#13) : capacité contractuelle ≠ vitesse du port."""
 
 from pathlib import Path

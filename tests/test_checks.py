@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests des contrôles avec un client ElastiFlow factice."""
 
 from datetime import UTC, datetime, timedelta

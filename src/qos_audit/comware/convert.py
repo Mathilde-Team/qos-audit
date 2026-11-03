@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Conversions : wildcard -> CIDR, opérateurs de ports -> intervalles, noms de DSCP, ACL -> FlowMatch."""
 
 from __future__ import annotations

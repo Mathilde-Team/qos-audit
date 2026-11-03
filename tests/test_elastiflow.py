@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests du client ElastiFlow : counter samples, champs, fenêtres, filtres, agrégations, pagination."""
 
 from __future__ import annotations

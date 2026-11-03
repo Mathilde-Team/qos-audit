@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Catalogue applicatif validé par l'humain : application -> classe cible."""
 
 from __future__ import annotations

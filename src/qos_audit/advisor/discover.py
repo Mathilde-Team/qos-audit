@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Découverte : flux sortants significatifs non classifiés (DSCP 0) par site et sortie."""
 
 from __future__ import annotations

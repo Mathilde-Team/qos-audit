@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Comparaison avant/après de deux rapports d'audit (fermeture de la boucle après un changement)."""
 
 from __future__ import annotations

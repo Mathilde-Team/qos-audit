@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Recommandations : confrontation des flux découverts au catalogue validé. L'outil propose, il ne décide pas."""
 
 from __future__ import annotations

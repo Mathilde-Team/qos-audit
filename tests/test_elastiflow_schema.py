@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de la vérification du schéma ElastiFlow au démarrage (issue #16)."""
 
 import argparse

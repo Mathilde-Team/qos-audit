@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Chargement de la politique théorique (YAML) et import des ACL Comware."""
 
 from __future__ import annotations

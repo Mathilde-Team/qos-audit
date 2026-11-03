@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Intégration contre un vrai OpenSearch (#17) : requêtes d'ElastiflowClient sur des documents ElastiFlow.
 
 Les tests unitaires utilisent un client factice ; ceux-ci rejouent les mêmes requêtes contre un nœud OpenSearch réel

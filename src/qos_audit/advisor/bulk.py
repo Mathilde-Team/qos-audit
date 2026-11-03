@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Trafic de masse sans classe sous BF (#34) : plage horaire autorisée et brouillon de shaper Comware.
 
 L'opérateur n'a pas de classe sous BF : une sauvegarde ne peut pas être abaissée de bout en bout. Seul un shaper

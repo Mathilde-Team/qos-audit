@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Accès aux données ElastiFlow (OpenSearch) : agrégations de flux sFlow."""
 
 from __future__ import annotations
