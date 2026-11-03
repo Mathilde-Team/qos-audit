@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de la modélisation des ``deny`` d'ACL comme exclusions (issue #21)."""
 
 from __future__ import annotations

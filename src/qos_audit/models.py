@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Modèles de données : politique théorique, topologie sites/sorties, résultats de contrôle."""
 
 from __future__ import annotations

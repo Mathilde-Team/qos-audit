@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Compteurs d'interface sFlow : débits exacts des sorties.
 
 Les counter samples sFlow livrent des compteurs d'interface cumulés (ifInOctets/ifOutOctets) toutes les 30 s :

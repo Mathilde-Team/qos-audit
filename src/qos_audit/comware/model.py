@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Modèle intermédiaire d'une configuration QoS Comware."""
 
 from __future__ import annotations

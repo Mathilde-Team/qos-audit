@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests du calcul de sampling : doivent retrouver le tableau 4.2 du protocole VAL-ELASTIFLOW-001."""
 
 import pytest

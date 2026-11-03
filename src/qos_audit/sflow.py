@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Extraction du contexte sFlow par interface depuis une configuration Comware 7 (issue #19).
 
 Réutilise le découpage en blocs du parseur comware : les commandes ``sflow`` système

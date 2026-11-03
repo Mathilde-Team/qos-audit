@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Analyse d'un ``display current-configuration`` Comware 7 : ACL, object-groups, classifiers, behaviors, policies."""
 
 from __future__ import annotations

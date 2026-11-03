@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de scripts/check_branch_protection.py et des règles versionnées (issue #3).
 
 Réseau exclu : l'état de la protection est fourni sous forme de réponses

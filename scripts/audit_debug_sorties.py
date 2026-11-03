@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Contrôle AST : un logger.debug() avant chaque sortie de fonction.
 
 Sortie = chaque ``return``, chaque ``raise`` et la fin implicite d'une

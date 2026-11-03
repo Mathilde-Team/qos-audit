@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Commandes du socle : le job Qualité (.github/workflows/ci.yml) appelle les
 # mêmes cibles, pour qu'un test local et le CI ne divergent jamais.
 .PHONY: lint test

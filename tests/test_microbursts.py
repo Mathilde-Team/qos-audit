@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Microbursts (#28) : plancher de bucket, option ``--bucket`` et constat ``microburst``."""
 
 from __future__ import annotations

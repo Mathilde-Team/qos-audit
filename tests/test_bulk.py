@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Trafic de masse sans classe sous BF (#34) : plages horaires, recommandation « contenir », shaper, contrôle."""
 
 from __future__ import annotations

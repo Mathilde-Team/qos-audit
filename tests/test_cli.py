@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests du point d'entrée : sous-commandes sampling, compare et audit (client simulé)."""
 
 from __future__ import annotations

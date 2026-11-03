@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Rejeu en CI des rapports de recette archivés (issue #36).
 
 Chaque scénario de recette (banc d'injection Mathilde-Team/Elastiflow-Validation#4, série R)

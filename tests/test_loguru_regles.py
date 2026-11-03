@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Règles loguru du SOCLE §8, vérifiées par analyse AST sur tout le Python suivi (``src/`` et ``scripts/``).
 
 - chaque ``except`` contient un appel loguru (aucune exception avalée en silence) ;
