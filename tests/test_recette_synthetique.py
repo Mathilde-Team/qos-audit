@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Recette synthétique des contrôles (#5, #36) : défauts connus rejoués sur un client factice.
 
 Chaque scénario reproduit, en enregistrements agrégés, un défaut de la série R du banc

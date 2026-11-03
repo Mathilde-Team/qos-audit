@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Génération d'un BROUILLON de configuration Comware (jamais appliqué automatiquement).
 
 La syntaxe est à valider selon le modèle et la version (Comware 7 supposé).

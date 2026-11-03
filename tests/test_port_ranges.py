@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """ACL par plages de ports trop larges (#32) : constat d'extraction et contrôle port_range."""
 
 from dataclasses import replace

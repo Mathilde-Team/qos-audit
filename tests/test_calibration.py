@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de la calibration et du contrôle de santé de l'instrument."""
 
 from datetime import date

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de l'extraction de la QoS depuis des configurations Comware."""
 
 import sys

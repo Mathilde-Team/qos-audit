@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Heuristique de profil « sauvegarde » (issue #9).
 
 Un flux de masse inconnu (hors catalogue IP/ports) reste « non classifié » : cette

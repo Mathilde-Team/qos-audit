@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Normalisation des noms d'interface Comware (forme courte ``GE1/0/10`` ou longue ``GigabitEthernet1/0/10``)."""
 
 from __future__ import annotations

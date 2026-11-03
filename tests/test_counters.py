@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests du calcul des débits exacts depuis les compteurs d'interface cumulés."""
 
 from datetime import UTC, datetime, timedelta

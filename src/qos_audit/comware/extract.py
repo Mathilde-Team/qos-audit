@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Extraction de la politique QoS théorique depuis des configurations Comware (ACL + marquage)."""
 
 from __future__ import annotations

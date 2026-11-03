@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Contrôle du trafic encapsulé (issue #30) : part IPsec/GRE/SD-WAN et DSCP externe.
 
 Le client factice dispatche par requête, comme ``Lab`` dans ``test_recette_synthetique.py``,

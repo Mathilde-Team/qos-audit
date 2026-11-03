@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests du chargement de politique et de l'import ACL."""
 
 import json

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Génère les scénarios de rejeu synthétiques R1-R6 de la recette (issue #36).
 
 Chaque scénario de la série R (défauts connus, voir docs/RECETTE.md) est produit

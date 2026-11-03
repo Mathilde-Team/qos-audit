@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Incertitude combinée par classe et taux mélangés (#27)."""
 
 import math

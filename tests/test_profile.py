@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de l'heuristique « candidat sauvegarde » (issue #9, advisor/profile.py)."""
 
 from datetime import UTC, datetime

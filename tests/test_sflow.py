@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de l'extraction du contexte sFlow (issue #19) : parse, section calibration, constats, CLI."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Table exporter/ifIndex/nom par SNMP (#18) : ``qos-audit ifindex-map``."""
 
 from __future__ import annotations

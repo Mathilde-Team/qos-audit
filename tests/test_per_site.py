@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Politique par site (#23) : rattachement des équipements, extract --per-site, audit d'un dossier."""
 
 import json

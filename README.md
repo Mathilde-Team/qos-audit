@@ -73,3 +73,13 @@ contre un vrai OpenSearch ; ils sont exclus de `make test` et tournent dans le j
     OPENSEARCH_URL=http://localhost:9200 uv run pytest -m integration tests/test_integration_opensearch.py
 
 Conventions : loguru (pas de `print`), docstrings Google, `__all__`, UTF-8 sans BOM.
+
+## Licence
+
+GPL-3.0-or-later (SOCLE.md §1, décision du 27/10/2026) : le fichier `LICENSE` à la racine porte le texte
+officiel de la GNU General Public License v3, et chaque fichier de code porte un en-tête
+`# SPDX-License-Identifier: GPL-3.0-or-later`.
+
+Historique : les versions antérieures à la relicence étaient distribuées sous licence MIT
+(« Copyright (c) 2026 Mathilde Deuscher »). Tous les contributeurs du dépôt appartiennent à l'équipe
+Mathilde-Team ; la notice MIT d'origine est conservée ici à titre d'historique de licence.

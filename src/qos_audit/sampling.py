@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Calcul du sampling-rate sFlow et de l'erreur attendue (voir docs/SAMPLING.md)."""
 
 from __future__ import annotations

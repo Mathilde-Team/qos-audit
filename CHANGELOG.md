@@ -7,6 +7,11 @@ relayer `dev` → `main`, puis pousser le tag `vX.Y.Z` sur `main` : `.github/wor
 
 ## [Non publié]
 
+### Changé
+- Licence : passage en GPL-3.0-or-later (#93) — texte officiel de la GPLv3 dans `LICENSE`, déclaration
+  `license` du `pyproject.toml`, en-têtes SPDX sur chaque fichier de code, historique MIT documenté dans
+  le README (conformité au socle, Mathilde-Team/.github#1).
+
 ## [0.1.0] - 2026-10-31
 
 Première version publiée : la politique QoS théorique (extraite des configurations Comware) est confrontée au marquage

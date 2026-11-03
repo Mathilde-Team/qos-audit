@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Table ``exporter,ifindex,name`` par SNMP (#18), pour ``extract --ifindex-map``.
 
 Chaque exporteur est interrogé avec ``snmpwalk`` (net-snmp) sur ``ifDescr`` (défaut, forme proche de la

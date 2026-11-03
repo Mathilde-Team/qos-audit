@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Calibration : résultats de la validation d'ElastiFlow (VAL-ELASTIFLOW-001) consommés par l'audit."""
 
 from __future__ import annotations

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Contrôle AST : une trace logger.debug() en entrée des fonctions éligibles.
 
 SOCLE §8 : la consigne « debug() en entrée et à chaque sortie » est vérifiée
